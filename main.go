@@ -234,7 +234,7 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 	if config.CookiesPath != "" {
 		ytdlArgs = append(ytdlArgs, "--cookies", config.CookiesPath)
 	}
-	ytdl := exec.Command("/home/mark/.local/bin/yt-dlp", ytdlArgs...)
+	ytdl := exec.Command("yt-dlp", ytdlArgs...)
 	var ytdlerr bytes.Buffer
 	ytdl.Stderr = &ytdlerr
 	ytdlout, err := ytdl.Output()
