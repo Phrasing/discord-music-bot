@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/zmb3/spotify"
 )
 
 var (
@@ -24,9 +25,12 @@ var (
 	inactivityTimers = make(map[string]*time.Timer)
 	// A map to store the queues for each guild
 	queues = make(map[string]*Queue)
+	// A map to store the skip channels for each guild
+	skipChannels = make(map[string]chan bool)
 )
 
 func main() {
+	initSpotify()
 	config := LoadConfig()
 
 	if config.BotToken == "" {
@@ -95,7 +99,35 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				log.Println("Error responding to interaction: ", err)
 			}
 
-			videoURL := i.ApplicationCommandData().Options[0].StringValue()
+			url := i.ApplicationCommandData().Options[0].StringValue()
+			var videoURL string
+
+			if strings.Contains(url, "spotify.com") {
+				// It's a spotify link, so we get the track ID and search it on youtube
+				trackIDString := strings.Split(url, "track/")[1]
+				trackID := spotify.ID(strings.Split(trackIDString, "?")[0])
+				trackName, err := getTrackName(trackID)
+				if err != nil {
+					log.Printf("Error getting track name: %v", err)
+					content := "Error getting track name from Spotify."
+					s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+						Content: &content,
+					})
+					return
+				}
+
+				videoURL, err = searchYoutube(trackName)
+				if err != nil {
+					log.Printf("Error searching youtube: %v", err)
+					content := "Error searching for the song on YouTube."
+					s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+						Content: &content,
+					})
+					return
+				}
+			} else {
+				videoURL = url
+			}
 
 			// Find the channel that the user is in
 			guild, err := s.State.Guild(i.GuildID)
@@ -155,9 +187,32 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			if len(vc.OpusSend) == 0 {
 				go playNext(s, i.GuildID)
 			} else {
-				content := "Added to queue."
+				queueList := queue.List()
+				var content string
+				content = "Added to queue:\n"
+				for i, song := range queueList {
+					content += fmt.Sprintf("%d. %s\n", i+1, song.URL)
+				}
 				s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 					Content: &content,
+				})
+			}
+
+		case "skip":
+			if skip, ok := skipChannels[i.GuildID]; ok {
+				skip <- true
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: "Skipped the current song.",
+					},
+				})
+			} else {
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: "Nothing to skip.",
+					},
 				})
 			}
 
@@ -168,6 +223,11 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					for !queue.IsEmpty() {
 						queue.Get()
 					}
+				}
+
+				// Stop the current song if there is one
+				if skip, ok := skipChannels[i.GuildID]; ok {
+					skip <- true
 				}
 
 				if timer, ok := inactivityTimers[i.GuildID]; ok {
@@ -311,30 +371,42 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 	vc.Speaking(true)
 	defer vc.Speaking(false)
 
+	// Create a skip channel
+	skip := make(chan bool)
+	skipChannels[guildID] = skip
+
 	log.Println("Reading from dca pipe")
 	// Reading from the DCA stdout pipe and sending it to Discord
 	var opuslen int16
 	for {
-		// Read opus frame length from dca file.
-		err = binary.Read(dcaout, binary.LittleEndian, &opuslen)
-		if err != nil {
-			if err != io.EOF && err != io.ErrUnexpectedEOF {
-				log.Printf("Error reading from dca stdout: %v", err)
+		select {
+		case <-skip:
+			log.Println("Song skipped")
+			ffmpeg.Process.Kill()
+			dca.Process.Kill()
+			return
+		default:
+			// Read opus frame length from dca file.
+			err = binary.Read(dcaout, binary.LittleEndian, &opuslen)
+			if err != nil {
+				if err != io.EOF && err != io.ErrUnexpectedEOF {
+					log.Printf("Error reading from dca stdout: %v", err)
+				}
+				return
 			}
-			break
-		}
 
-		// Read encoded pcm from dca file.
-		InBuf := make([]byte, opuslen)
-		err = binary.Read(dcaout, binary.LittleEndian, &InBuf)
-		if err != nil {
-			if err != io.EOF && err != io.ErrUnexpectedEOF {
-				log.Printf("Error reading from dca stdout: %v", err)
+			// Read encoded pcm from dca file.
+			InBuf := make([]byte, opuslen)
+			err = binary.Read(dcaout, binary.LittleEndian, &InBuf)
+			if err != nil {
+				if err != io.EOF && err != io.ErrUnexpectedEOF {
+					log.Printf("Error reading from dca stdout: %v", err)
+				}
+				return
 			}
-			break
-		}
 
-		vc.OpusSend <- InBuf
+			vc.OpusSend <- InBuf
+		}
 	}
 	log.Println("Finished reading from dca pipe")
 

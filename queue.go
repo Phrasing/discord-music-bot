@@ -40,3 +40,12 @@ func (q *Queue) IsEmpty() bool {
 	defer q.mut.Unlock()
 	return len(q.songs) == 0
 }
+
+func (q *Queue) List() []*Song {
+	q.mut.Lock()
+	defer q.mut.Unlock()
+	// Return a copy of the songs slice
+	songsCopy := make([]*Song, len(q.songs))
+	copy(songsCopy, q.songs)
+	return songsCopy
+}

@@ -20,5 +20,9 @@ var (
 			Name:        "stop",
 			Description: "Stop playing music and leave the voice channel",
 		},
+		{
+			Name:        "skip",
+			Description: "Skip the current song",
+		},
 	}
 )

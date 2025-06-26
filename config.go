@@ -8,8 +8,10 @@ import (
 )
 
 type Config struct {
-	BotToken    string
-	CookiesPath string
+	BotToken            string
+	CookiesPath         string
+	SpotifyClientID     string
+	SpotifyClientSecret string
 }
 
 func LoadConfig() *Config {
@@ -19,7 +21,9 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		BotToken:    os.Getenv("BOT_TOKEN"),
-		CookiesPath: os.Getenv("COOKIES_PATH"),
+		BotToken:            os.Getenv("BOT_TOKEN"),
+		CookiesPath:         os.Getenv("COOKIES_PATH"),
+		SpotifyClientID:     os.Getenv("SPOTIFY_CLIENT_ID"),
+		SpotifyClientSecret: os.Getenv("SPOTIFY_CLIENT_SECRET"),
 	}
 }
