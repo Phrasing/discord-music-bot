@@ -35,6 +35,12 @@ A simple Discord music bot that plays audio from YouTube.
 
     Follow the installation instructions for your operating system from the links in the Prerequisites section.
 
+    Make sure that your Go bin directory is in your `PATH`. You can add it to your `~/.bashrc` or `~/.zshrc` with the following command:
+
+    ```bash
+    export PATH=$PATH:$(go env GOPATH)/bin
+    ```
+
     For `dca`, you may need to use the following command to install it correctly:
 
     ```bash
