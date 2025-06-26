@@ -44,7 +44,7 @@ A simple Discord music bot that plays audio from YouTube.
     For `dca`, you may need to use the following command to install it correctly:
 
     ```bash
-    sudo CGO_CFLAGS="-O3 -Wno-stringop-overread" go install github.com/bwmarrin/dca/cmd/dca@latest
+    CGO_CFLAGS="-O3 -Wno-stringop-overread" go install github.com/bwmarrin/dca/cmd/dca@latest
     ```
 
     It is highly recommended to use the nightly version of `yt-dlp` to keep up with YouTube's changes. You can install it using `pipx`:
