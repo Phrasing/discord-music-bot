@@ -445,7 +445,7 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 		return
 	}
 
-	dca := exec.Command("dca", "-as", "1920", "-ab", "128")
+	dca := exec.Command("dca")
 	dcaerr, err := dca.StderrPipe()
 	if err != nil {
 		log.Printf("Error getting dca stderr pipe: %v", err)
