@@ -218,6 +218,12 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 					Content: &content,
 				})
+
+				var queueText string
+				for i, song := range queueList {
+					queueText += fmt.Sprintf("%d. %s\n", i+1, song.Title)
+				}
+				queueMessages[i.GuildID] = queueText
 			}
 
 		case "skip":
