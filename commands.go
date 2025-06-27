@@ -7,17 +7,44 @@ var (
 		discordgo.ActionsRow{
 			Components: []discordgo.MessageComponent{
 				discordgo.Button{
-					Label:    "Pause/Resume",
+					Emoji: &discordgo.ComponentEmoji{
+						Name: "⏸️",
+					},
 					Style:    discordgo.PrimaryButton,
 					CustomID: "music_pause",
 				},
 				discordgo.Button{
-					Label:    "Skip",
+					Emoji: &discordgo.ComponentEmoji{
+						Name: "⏭️",
+					},
 					Style:    discordgo.PrimaryButton,
 					CustomID: "music_skip",
 				},
 				discordgo.Button{
-					Label:    "Stop",
+					Emoji: &discordgo.ComponentEmoji{
+						Name: "⏹️",
+					},
+					Style:    discordgo.DangerButton,
+					CustomID: "music_stop",
+				},
+			},
+		},
+	}
+
+	musicButtonsNoSkip = []discordgo.MessageComponent{
+		discordgo.ActionsRow{
+			Components: []discordgo.MessageComponent{
+				discordgo.Button{
+					Emoji: &discordgo.ComponentEmoji{
+						Name: "⏸️",
+					},
+					Style:    discordgo.PrimaryButton,
+					CustomID: "music_pause",
+				},
+				discordgo.Button{
+					Emoji: &discordgo.ComponentEmoji{
+						Name: "⏹️",
+					},
 					Style:    discordgo.DangerButton,
 					CustomID: "music_stop",
 				},
