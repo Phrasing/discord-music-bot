@@ -524,12 +524,10 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	skip := make(chan bool)
 	skipChannels[guildID] = skip
 	done := make(chan bool)
-	defer close(done)
 
 	log.Println("Reading from dca pipe")
 
 	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
 	startTime := time.Now()
 	var pausedTime time.Time
 	var totalPausedDuration time.Duration
@@ -573,6 +571,8 @@ readLoop:
 		select {
 		case <-skip:
 			log.Println("Song skipped")
+			close(done)
+			ticker.Stop()
 			ffmpeg.Process.Kill()
 			dca.Process.Kill()
 			playNext(s, guildID, song)
@@ -603,6 +603,8 @@ readLoop:
 		}
 	}
 
+	close(done)
+	ticker.Stop()
 	ffmpeg.Wait()
 	dca.Wait()
 
