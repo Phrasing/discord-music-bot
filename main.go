@@ -168,17 +168,20 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				return
 			}
 
-			// Join the voice channel
-			vc, err := s.ChannelVoiceJoin(i.GuildID, voiceChannelID, false, true)
-			if err != nil {
-				log.Println("Error joining voice channel: ", err)
-				content := "Error joining voice channel."
-				s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-					Content: &content,
-				})
-				return
+			// Join the voice channel if not already in one
+			vc, ok := voiceConnections[i.GuildID]
+			if !ok {
+				vc, err = s.ChannelVoiceJoin(i.GuildID, voiceChannelID, false, true)
+				if err != nil {
+					log.Println("Error joining voice channel: ", err)
+					content := "Error joining voice channel."
+					s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+						Content: &content,
+					})
+					return
+				}
+				voiceConnections[i.GuildID] = vc
 			}
-			voiceConnections[i.GuildID] = vc
 
 			// If there's an inactivity timer running, stop it
 			if timer, ok := inactivityTimers[i.GuildID]; ok {
