@@ -213,7 +213,8 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					content += fmt.Sprintf("%d. %s\n", i+1, song.URL)
 				}
 				s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-					Content: &content,
+					Content:    &content,
+					Components: &musicButtons,
 				})
 			}
 
@@ -404,19 +405,7 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 		return
 	}
 
-	var components []discordgo.MessageComponent
-	if queues[guildID].IsEmpty() {
-		components = musicButtonsNoSkip
-	} else {
-		components = musicButtons
-	}
-	_, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content:    fmt.Sprintf("Now playing: %s", videoURL),
-		Components: components,
-	})
-	if err != nil {
-		log.Printf("Error sending now playing message: %v", err)
-	}
+	s.ChannelMessageSend(channelID, fmt.Sprintf("Now playing: %s", videoURL))
 
 	ytdlArgs := []string{
 		"--get-url",
