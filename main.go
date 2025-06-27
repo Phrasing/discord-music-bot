@@ -368,6 +368,17 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 func playNext(s *discordgo.Session, guildID string) {
 	queue, ok := queues[guildID]
 	if !ok || queue.IsEmpty() {
+		if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
+			var components []discordgo.MessageComponent
+			s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+				Content:    &nowPlaying.Content,
+				Components: &components,
+				ID:         nowPlaying.ID,
+				Channel:    nowPlaying.ChannelID,
+			})
+			delete(nowPlayingMessages, guildID)
+		}
+
 		inactivityTimers[guildID] = time.AfterFunc(30*time.Second, func() {
 			if vc, ok := voiceConnections[guildID]; ok {
 				vc.Disconnect()
