@@ -24,7 +24,7 @@ var (
 					Emoji: &discordgo.ComponentEmoji{
 						Name: "⏹️",
 					},
-					Style:    discordgo.DangerButton,
+					Style:    discordgo.SecondaryButton,
 					CustomID: "music_stop",
 				},
 			},
@@ -45,7 +45,7 @@ var (
 					Emoji: &discordgo.ComponentEmoji{
 						Name: "⏹️",
 					},
-					Style:    discordgo.DangerButton,
+					Style:    discordgo.SecondaryButton,
 					CustomID: "music_stop",
 				},
 			},
