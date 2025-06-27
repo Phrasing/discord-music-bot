@@ -4,7 +4,7 @@ A simple Discord music bot that plays audio from YouTube.
 
 ## Features
 
-- Plays audio from YouTube links.
+- Plays audio from YouTube, SoundCloud, and Spotify.
 - Supports queueing songs.
 - Automatically disconnects after 30 seconds of inactivity.
 - Uses slash commands for interaction.
