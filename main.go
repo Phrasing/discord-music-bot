@@ -99,12 +99,12 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				log.Println("Error responding to interaction: ", err)
 			}
 
-			url := i.ApplicationCommandData().Options[0].StringValue()
+			query := i.ApplicationCommandData().Options[0].StringValue()
 			var videoURL string
 
-			if strings.Contains(url, "spotify.com") {
+			if strings.Contains(query, "spotify.com") {
 				// It's a spotify link, so we get the track ID and search it on youtube
-				trackIDString := strings.Split(url, "track/")[1]
+				trackIDString := strings.Split(query, "track/")[1]
 				trackID := spotify.ID(strings.Split(trackIDString, "?")[0])
 				trackName, err := getTrackName(trackID)
 				if err != nil {
@@ -125,8 +125,19 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					})
 					return
 				}
+			} else if !strings.HasPrefix(query, "http") {
+				// It's a search query, so we search on youtube
+				videoURL, err = searchYoutube(query)
+				if err != nil {
+					log.Printf("Error searching youtube: %v", err)
+					content := "Error searching for the song on YouTube."
+					s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+						Content: &content,
+					})
+					return
+				}
 			} else {
-				videoURL = url
+				videoURL = query
 			}
 
 			// Find the channel that the user is in

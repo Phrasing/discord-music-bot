@@ -108,5 +108,6 @@ go run .
 
 ## Commands
 
--   `/play <youtube_url>`: Plays a song from the given YouTube URL or adds it to the queue if a song is already playing.
+-   `/play <youtube_url_or_search_query>`: Plays a song from a YouTube URL, Spotify URL, or a search query. Adds the song to the queue if one is already playing.
 -   `/stop`: Stops the music, clears the queue, and disconnects the bot from the voice channel.
+-   `/skip`: Skips the current song and plays the next one in the queue.
