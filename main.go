@@ -212,12 +212,6 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 					Content: &content,
 				})
-
-				var queueText string
-				for i, song := range queueList {
-					queueText += fmt.Sprintf("%d. %s\n", i+1, song.URL)
-				}
-				queueMessages[i.GuildID] = queueText
 			}
 
 		case "skip":
@@ -591,15 +585,21 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 
 				elapsed := time.Since(startTime) - totalPausedDuration
 				if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
+					components := musicButtonsNoSkip
+					if !queues[guildID].IsEmpty() {
+						components = musicButtons
+					}
 					newContent := fmt.Sprintf("Now playing: %s\n`%s / %s`",
 						nowPlayingURL,
 						formatDuration(elapsed),
 						formatDuration(song.Duration),
 					)
-					if queueText, ok := queueMessages[guildID]; ok {
-						newContent += "\n\n**Queue:**\n" + queueText
-					}
-					s.ChannelMessageEdit(nowPlaying.ChannelID, nowPlaying.ID, newContent)
+					s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+						Content:    &newContent,
+						Components: &components,
+						ID:         nowPlaying.ID,
+						Channel:    nowPlaying.ChannelID,
+					})
 				}
 			case <-done:
 				return
