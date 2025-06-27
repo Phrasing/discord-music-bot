@@ -29,6 +29,8 @@ var (
 	skipChannels = make(map[string]chan bool)
 	// A map to store the paused state for each guild
 	paused = make(map[string]bool)
+	// A map to store the now playing message for each guild
+	nowPlayingMessages = make(map[string]*discordgo.Message)
 )
 
 func main() {
@@ -213,9 +215,17 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					content += fmt.Sprintf("%d. %s\n", i+1, song.URL)
 				}
 				s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-					Content:    &content,
-					Components: &musicButtons,
+					Content: &content,
 				})
+
+				// Edit the now playing message to include the queue
+				if nowPlaying, ok := nowPlayingMessages[i.GuildID]; ok {
+					newContent := nowPlaying.Content + "\n\n**Queue:**\n"
+					for i, song := range queueList {
+						newContent += fmt.Sprintf("%d. %s\n", i+1, song.URL)
+					}
+					s.ChannelMessageEdit(i.ChannelID, nowPlaying.ID, newContent)
+				}
 			}
 
 		case "skip":
@@ -405,7 +415,18 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 		return
 	}
 
-	s.ChannelMessageSend(channelID, fmt.Sprintf("Now playing: %s", videoURL))
+	components := musicButtons
+	if queues[guildID].IsEmpty() {
+		components = musicButtonsNoSkip
+	}
+
+	nowPlaying, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content:    fmt.Sprintf("Now playing: %s", videoURL),
+		Components: components,
+	})
+	if err == nil {
+		nowPlayingMessages[guildID] = nowPlaying
+	}
 
 	ytdlArgs := []string{
 		"--get-url",
