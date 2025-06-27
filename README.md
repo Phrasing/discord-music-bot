@@ -21,8 +21,8 @@ A simple Discord music bot that plays audio from YouTube.
 1.  **Clone the repository:**
 
     ```bash
-    git clone https://github.com/Phrasing/yt-discord-music-bot.git
-    cd yt-discord-music-bot
+    git clone https://github.com/Phrasing/discord-music-bot.git
+    cd discord-music-bot
     ```
 
 2.  **Install Go dependencies:**
