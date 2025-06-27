@@ -27,6 +27,7 @@ var (
 	paused             = make(map[string]bool)
 	nowPlayingMessages = make(map[string]*discordgo.Message)
 	runningProcesses   = make(map[string][]*os.Process)
+	queueMessages      = make(map[string]string)
 )
 
 func main() {
@@ -211,13 +212,11 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					Content: &content,
 				})
 
-				if nowPlaying, ok := nowPlayingMessages[i.GuildID]; ok {
-					newContent := nowPlaying.Content + "\n\n**Queue:**\n"
-					for i, song := range queueList {
-						newContent += fmt.Sprintf("%d. %s\n", i+1, song.URL)
-					}
-					s.ChannelMessageEdit(i.ChannelID, nowPlaying.ID, newContent)
+				var queueText string
+				for i, song := range queueList {
+					queueText += fmt.Sprintf("%d. %s\n", i+1, song.URL)
 				}
+				queueMessages[i.GuildID] = queueText
 			}
 
 		case "skip":
@@ -265,6 +264,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 		case "stop":
 			if vc, ok := voiceConnections[i.GuildID]; ok {
+				delete(queueMessages, i.GuildID)
 				if queue, ok := queues[i.GuildID]; ok {
 					for !queue.IsEmpty() {
 						queue.Get()
@@ -359,6 +359,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			}
 		case "music_stop":
 			if vc, ok := voiceConnections[i.GuildID]; ok {
+				delete(queueMessages, i.GuildID)
 				if queue, ok := queues[i.GuildID]; ok {
 					for !queue.IsEmpty() {
 						queue.Get()
@@ -404,6 +405,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 func playNext(s *discordgo.Session, guildID string, lastSong *Song) {
 	queue, ok := queues[guildID]
 	if !ok || queue.IsEmpty() {
+		delete(queueMessages, guildID)
 		if lastSong != nil {
 			if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
 				newContent := fmt.Sprintf("Playback Finished: %s", lastSong.URL)
@@ -458,6 +460,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		Content:    content,
 		Components: components,
 	})
+	nowPlayingURL := videoURL
 
 	if err == nil {
 		nowPlayingMessages[guildID] = nowPlaying
@@ -582,10 +585,13 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 				elapsed := time.Since(startTime) - totalPausedDuration
 				if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
 					newContent := fmt.Sprintf("Now playing: %s\n`%s / %s`",
-						song.URL,
+						nowPlayingURL,
 						formatDuration(elapsed),
 						formatDuration(song.Duration),
 					)
+					if queueText, ok := queueMessages[guildID]; ok {
+						newContent += "\n\n**Queue:**\n" + queueText
+					}
 					s.ChannelMessageEdit(nowPlaying.ChannelID, nowPlaying.ID, newContent)
 				}
 			case <-skip:
