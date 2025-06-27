@@ -94,6 +94,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
 					Content: "Searching for the song...",
+					Flags:   discordgo.MessageFlagsEphemeral,
 				},
 			})
 			if err != nil {
@@ -226,6 +227,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
 						Content: "Skipped the current song.",
+						Flags:   discordgo.MessageFlagsEphemeral,
 					},
 				})
 			} else {
@@ -233,6 +235,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
 						Content: "Nothing to skip.",
+						Flags:   discordgo.MessageFlagsEphemeral,
 					},
 				})
 			}
@@ -251,6 +254,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
 						Content: status,
+						Flags:   discordgo.MessageFlagsEphemeral,
 					},
 				})
 			} else {
@@ -258,6 +262,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
 						Content: "Not in a voice channel.",
+						Flags:   discordgo.MessageFlagsEphemeral,
 					},
 				})
 			}
@@ -300,6 +305,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
 						Content: "Stopped playing and left the voice channel.",
+						Flags:   discordgo.MessageFlagsEphemeral,
 					},
 				})
 			} else {
@@ -307,6 +313,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
 						Content: "Not currently in a voice channel.",
+						Flags:   discordgo.MessageFlagsEphemeral,
 					},
 				})
 			}
