@@ -9,6 +9,7 @@ type Song struct {
 	URL       string
 	ChannelID string
 	Duration  time.Duration
+	Title     string
 }
 
 type Queue struct {

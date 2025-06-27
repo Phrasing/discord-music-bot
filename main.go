@@ -193,10 +193,16 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				log.Printf("Error getting duration: %v", err)
 			}
 
+			title, err := getVideoTitle(videoURL)
+			if err != nil {
+				log.Printf("Error getting video title: %v", err)
+			}
+
 			song := &Song{
 				URL:       videoURL,
 				ChannelID: i.ChannelID,
 				Duration:  duration,
+				Title:     title,
 			}
 			queue.Add(song)
 
@@ -589,11 +595,15 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 					if !queues[guildID].IsEmpty() {
 						components = musicButtons
 					}
-					newContent := fmt.Sprintf("Now playing: %s\n`%s / %s`",
+					newContent := fmt.Sprintf("Now playing: [%s](%s)\n`%s / %s`",
+						song.Title,
 						nowPlayingURL,
 						formatDuration(elapsed),
 						formatDuration(song.Duration),
 					)
+					if queueText, ok := queueMessages[guildID]; ok {
+						newContent += "\n\n**Queue:**\n" + queueText
+					}
 					s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 						Content:    &newContent,
 						Components: &components,
@@ -690,4 +700,13 @@ func formatDuration(d time.Duration) string {
 	d -= m * time.Minute
 	s := d / time.Second
 	return fmt.Sprintf("%02d:%02d", m, s)
+}
+
+func getVideoTitle(videoURL string) (string, error) {
+	ytdl := exec.Command("yt-dlp", "--get-title", videoURL)
+	titleBytes, err := ytdl.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(titleBytes)), nil
 }
