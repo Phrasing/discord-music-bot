@@ -125,6 +125,8 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					})
 					return
 				}
+			} else if strings.Contains(query, "soundcloud.com") {
+				videoURL = query
 			} else if !strings.HasPrefix(query, "http") {
 				// It's a search query, so we search on youtube
 				videoURL, err = searchYoutube(query)
