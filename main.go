@@ -198,7 +198,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			queue.Add(song)
 
 			if len(vc.OpusSend) == 0 {
-				go playNext(s, i.GuildID)
+				go playNext(s, i.GuildID, nil)
 			} else {
 				queueList := queue.List()
 				var content string
@@ -372,13 +372,14 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 }
 
-func playNext(s *discordgo.Session, guildID string) {
+func playNext(s *discordgo.Session, guildID string, lastSong *Song) {
 	queue, ok := queues[guildID]
 	if !ok || queue.IsEmpty() {
 		if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
 			var components []discordgo.MessageComponent
+			newContent := fmt.Sprintf("Playback Finished: %s", lastSong.URL)
 			s.ChannelMessageEditComplex(&discordgo.MessageEdit{
-				Content:    &nowPlaying.Content,
+				Content:    &newContent,
 				Components: &components,
 				ID:         nowPlaying.ID,
 				Channel:    nowPlaying.ChannelID,
@@ -449,7 +450,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		log.Printf("Error getting stream URL: %v", err)
 		log.Printf("yt-dlp stderr: %s", ytdlerr.String())
 		s.ChannelMessageSend(channelID, "Error getting audio stream.")
-		playNext(s, guildID)
+		playNext(s, guildID, song)
 		return
 	}
 	streamURL := strings.TrimSpace(string(ytdlout))
@@ -458,7 +459,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	ffmpegerr, err := ffmpeg.StderrPipe()
 	if err != nil {
 		log.Printf("Error getting ffmpeg stderr pipe: %v", err)
-		playNext(s, guildID)
+		playNext(s, guildID, song)
 		return
 	}
 
@@ -466,14 +467,14 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	dcaerr, err := dca.StderrPipe()
 	if err != nil {
 		log.Printf("Error getting dca stderr pipe: %v", err)
-		playNext(s, guildID)
+		playNext(s, guildID, song)
 		return
 	}
 
 	ffmpegout, err := ffmpeg.StdoutPipe()
 	if err != nil {
 		log.Printf("Error getting ffmpeg stdout pipe: %v", err)
-		playNext(s, guildID)
+		playNext(s, guildID, song)
 		return
 	}
 	dca.Stdin = ffmpegout
@@ -481,7 +482,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	dcaout, err := dca.StdoutPipe()
 	if err != nil {
 		log.Printf("Error getting dca stdout pipe: %v", err)
-		playNext(s, guildID)
+		playNext(s, guildID, song)
 		return
 	}
 
@@ -502,7 +503,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	err = ffmpeg.Start()
 	if err != nil {
 		log.Printf("Error starting ffmpeg: %v", err)
-		playNext(s, guildID)
+		playNext(s, guildID, song)
 		return
 	}
 	log.Println("ffmpeg started")
@@ -510,7 +511,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	err = dca.Start()
 	if err != nil {
 		log.Printf("Error starting dca: %v", err)
-		playNext(s, guildID)
+		playNext(s, guildID, song)
 		return
 	}
 	log.Println("dca started")
@@ -568,7 +569,7 @@ readLoop:
 			log.Println("Song skipped")
 			ffmpeg.Process.Kill()
 			dca.Process.Kill()
-			playNext(s, guildID)
+			playNext(s, guildID, song)
 			return
 		default:
 			if paused[guildID] {
@@ -601,7 +602,7 @@ readLoop:
 
 	log.Println("playSound finished")
 
-	playNext(s, guildID)
+	playNext(s, guildID, song)
 }
 
 func getDuration(videoURL string) (time.Duration, error) {
