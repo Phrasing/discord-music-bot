@@ -299,16 +299,33 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			if vc, ok := voiceConnections[i.GuildID]; ok {
 				paused[i.GuildID] = !paused[i.GuildID]
 				vc.Speaking(!paused[i.GuildID])
-				var status string
+
+				var emojiName string
 				if paused[i.GuildID] {
-					status = "Paused"
+					emojiName = "▶️"
 				} else {
-					status = "Resumed"
+					emojiName = "⏸️"
 				}
+
+				// Update the button
+				components := i.Message.Components
+				if len(components) > 0 {
+					if row, ok := components[0].(*discordgo.ActionsRow); ok {
+						for _, component := range row.Components {
+							if button, ok := component.(*discordgo.Button); ok {
+								if button.CustomID == "music_pause" {
+									button.Emoji.Name = emojiName
+								}
+							}
+						}
+					}
+				}
+
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 					Type: discordgo.InteractionResponseUpdateMessage,
 					Data: &discordgo.InteractionResponseData{
-						Content: status,
+						Content:    i.Message.Content,
+						Components: components,
 					},
 				})
 			}
@@ -318,7 +335,8 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 					Type: discordgo.InteractionResponseUpdateMessage,
 					Data: &discordgo.InteractionResponseData{
-						Content: "Skipped the current song.",
+						Content:    "Skipped the current song.",
+						Components: musicButtons,
 					},
 				})
 			}
@@ -383,9 +401,15 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 		return
 	}
 
+	var components []discordgo.MessageComponent
+	if queues[guildID].IsEmpty() {
+		components = musicButtonsNoSkip
+	} else {
+		components = musicButtons
+	}
 	_, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
 		Content:    fmt.Sprintf("Now playing: %s", videoURL),
-		Components: musicButtons,
+		Components: components,
 	})
 	if err != nil {
 		log.Printf("Error sending now playing message: %v", err)
@@ -421,7 +445,7 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 		return
 	}
 
-	dca := exec.Command("dca")
+	dca := exec.Command("dca", "-as", "1920", "-ab", "128")
 	dcaerr, err := dca.StderrPipe()
 	if err != nil {
 		log.Printf("Error getting dca stderr pipe: %v", err)
