@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -184,9 +185,15 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			}
 			queue := queues[i.GuildID]
 
+			duration, err := getDuration(videoURL)
+			if err != nil {
+				log.Printf("Error getting duration: %v", err)
+			}
+
 			song := &Song{
 				URL:       videoURL,
 				ChannelID: i.ChannelID,
+				Duration:  duration,
 			}
 			queue.Add(song)
 
@@ -391,12 +398,15 @@ func playNext(s *discordgo.Session, guildID string) {
 	}
 
 	song := queue.Get()
-	playSound(s, guildID, song.ChannelID, song.URL)
+	playSound(s, guildID, song)
 }
 
-func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
+func playSound(s *discordgo.Session, guildID string, song *Song) {
 	log.Println("playSound started")
 	config := LoadConfig()
+
+	videoURL := song.URL
+	channelID := song.ChannelID
 
 	vc, ok := voiceConnections[guildID]
 	if !ok {
@@ -409,8 +419,12 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 		components = musicButtonsNoSkip
 	}
 
+	content := fmt.Sprintf("Now playing: %s", videoURL)
+	if song.Duration > 0 {
+		content += fmt.Sprintf("\n`%s / %s`", formatDuration(0), formatDuration(song.Duration))
+	}
 	nowPlaying, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content:    fmt.Sprintf("Now playing: %s", videoURL),
+		Content:    content,
 		Components: components,
 	})
 
@@ -508,6 +522,44 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 	skipChannels[guildID] = skip
 
 	log.Println("Reading from dca pipe")
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	startTime := time.Now()
+	var pausedTime time.Time
+	var totalPausedDuration time.Duration
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				if paused[guildID] {
+					if pausedTime.IsZero() {
+						pausedTime = time.Now()
+					}
+					continue
+				} else {
+					if !pausedTime.IsZero() {
+						totalPausedDuration += time.Since(pausedTime)
+						pausedTime = time.Time{}
+					}
+				}
+
+				elapsed := time.Since(startTime) - totalPausedDuration
+				if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
+					newContent := fmt.Sprintf("Now playing: %s\n`%s / %s`",
+						song.URL,
+						formatDuration(elapsed),
+						formatDuration(song.Duration),
+					)
+					s.ChannelMessageEdit(nowPlaying.ChannelID, nowPlaying.ID, newContent)
+				}
+			case <-skip:
+				return
+			}
+		}
+	}()
+
 	var opuslen int16
 readLoop:
 	for {
@@ -550,4 +602,41 @@ readLoop:
 	log.Println("playSound finished")
 
 	playNext(s, guildID)
+}
+
+func getDuration(videoURL string) (time.Duration, error) {
+	ytdl := exec.Command("yt-dlp", "--get-duration", videoURL)
+	durationBytes, err := ytdl.Output()
+	if err != nil {
+		return 0, err
+	}
+
+	durationStr := strings.TrimSpace(string(durationBytes))
+	parts := strings.Split(durationStr, ":")
+	var duration time.Duration
+	if len(parts) == 3 { // HH:MM:SS
+		h, _ := strconv.Atoi(parts[0])
+		m, _ := strconv.Atoi(parts[1])
+		s, _ := strconv.Atoi(parts[2])
+		duration = time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
+	} else if len(parts) == 2 { // MM:SS
+		m, _ := strconv.Atoi(parts[0])
+		s, _ := strconv.Atoi(parts[1])
+		duration = time.Duration(m)*time.Minute + time.Duration(s)*time.Second
+	} else if len(parts) == 1 { // SS
+		s, _ := strconv.Atoi(parts[0])
+		duration = time.Duration(s) * time.Second
+	} else {
+		return 0, fmt.Errorf("invalid duration format: %s", durationStr)
+	}
+
+	return duration, nil
+}
+
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+	return fmt.Sprintf("%02d:%02d", m, s)
 }

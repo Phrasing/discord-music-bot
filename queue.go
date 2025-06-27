@@ -1,10 +1,14 @@
 package main
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type Song struct {
 	URL       string
 	ChannelID string
+	Duration  time.Duration
 }
 
 type Queue struct {
