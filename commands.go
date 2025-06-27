@@ -17,7 +17,7 @@ var (
 					Emoji: &discordgo.ComponentEmoji{
 						Name: "⏭️",
 					},
-					Style:    discordgo.PrimaryButton,
+					Style:    discordgo.SecondaryButton,
 					CustomID: "music_skip",
 				},
 				discordgo.Button{
