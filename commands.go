@@ -10,7 +10,7 @@ var (
 					Emoji: &discordgo.ComponentEmoji{
 						Name: "⏸️",
 					},
-					Style:    discordgo.PrimaryButton,
+					Style:    discordgo.SecondaryButton,
 					CustomID: "music_pause",
 				},
 				discordgo.Button{
@@ -38,7 +38,7 @@ var (
 					Emoji: &discordgo.ComponentEmoji{
 						Name: "⏸️",
 					},
-					Style:    discordgo.PrimaryButton,
+					Style:    discordgo.SecondaryButton,
 					CustomID: "music_pause",
 				},
 				discordgo.Button{
