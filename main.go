@@ -486,6 +486,9 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	if config.CookiesPath != "" {
 		ytdlArgs = append(ytdlArgs, "--cookies", config.CookiesPath)
 	}
+	if config.YtDlpProxy != "" {
+		ytdlArgs = append(ytdlArgs, "--proxy", config.YtDlpProxy)
+	}
 	ytdl := exec.Command("yt-dlp", ytdlArgs...)
 	var ytdlerr bytes.Buffer
 	ytdl.Stderr = &ytdlerr

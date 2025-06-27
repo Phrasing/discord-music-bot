@@ -12,6 +12,7 @@ type Config struct {
 	CookiesPath         string
 	SpotifyClientID     string
 	SpotifyClientSecret string
+	YtDlpProxy          string
 }
 
 func LoadConfig() *Config {
@@ -25,5 +26,6 @@ func LoadConfig() *Config {
 		CookiesPath:         os.Getenv("COOKIES_PATH"),
 		SpotifyClientID:     os.Getenv("SPOTIFY_CLIENT_ID"),
 		SpotifyClientSecret: os.Getenv("SPOTIFY_CLIENT_SECRET"),
+		YtDlpProxy:          os.Getenv("YT_DLP_PROXY"),
 	}
 }
