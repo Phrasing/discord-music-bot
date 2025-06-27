@@ -19,17 +19,11 @@ import (
 )
 
 var (
-	// A map to store the voice connections for each guild
-	voiceConnections = make(map[string]*discordgo.VoiceConnection)
-	// A map to store the inactivity timers for each guild
-	inactivityTimers = make(map[string]*time.Timer)
-	// A map to store the queues for each guild
-	queues = make(map[string]*Queue)
-	// A map to store the skip channels for each guild
-	skipChannels = make(map[string]chan bool)
-	// A map to store the paused state for each guild
-	paused = make(map[string]bool)
-	// A map to store the now playing message for each guild
+	voiceConnections   = make(map[string]*discordgo.VoiceConnection)
+	inactivityTimers   = make(map[string]*time.Timer)
+	queues             = make(map[string]*Queue)
+	skipChannels       = make(map[string]chan bool)
+	paused             = make(map[string]bool)
 	nowPlayingMessages = make(map[string]*discordgo.Message)
 )
 
@@ -93,7 +87,6 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	case discordgo.InteractionApplicationCommand:
 		switch i.ApplicationCommandData().Name {
 		case "play":
-			// Respond to the interaction
 			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
@@ -108,7 +101,6 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			var videoURL string
 
 			if strings.Contains(query, "spotify.com") {
-				// It's a spotify link, so we get the track ID and search it on youtube
 				trackIDString := strings.Split(query, "track/")[1]
 				trackID := spotify.ID(strings.Split(trackIDString, "?")[0])
 				trackName, err := getTrackName(trackID)
@@ -133,7 +125,6 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			} else if strings.Contains(query, "soundcloud.com") {
 				videoURL = query
 			} else if !strings.HasPrefix(query, "http") {
-				// It's a search query, so we search on youtube
 				videoURL, err = searchYoutube(query)
 				if err != nil {
 					log.Printf("Error searching youtube: %v", err)
@@ -147,7 +138,6 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				videoURL = query
 			}
 
-			// Find the channel that the user is in
 			guild, err := s.State.Guild(i.GuildID)
 			if err != nil {
 				log.Println("Error getting guild: ", err)
@@ -170,7 +160,6 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				return
 			}
 
-			// Join the voice channel if not already in one
 			vc, ok := voiceConnections[i.GuildID]
 			if !ok {
 				vc, err = s.ChannelVoiceJoin(i.GuildID, voiceChannelID, false, true)
@@ -185,26 +174,22 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				voiceConnections[i.GuildID] = vc
 			}
 
-			// If there's an inactivity timer running, stop it
 			if timer, ok := inactivityTimers[i.GuildID]; ok {
 				timer.Stop()
 				delete(inactivityTimers, i.GuildID)
 			}
 
-			// Get the queue for the guild
 			if _, ok := queues[i.GuildID]; !ok {
 				queues[i.GuildID] = NewQueue()
 			}
 			queue := queues[i.GuildID]
 
-			// Add the song to the queue
 			song := &Song{
 				URL:       videoURL,
 				ChannelID: i.ChannelID,
 			}
 			queue.Add(song)
 
-			// If nothing is playing, start playing
 			if len(vc.OpusSend) == 0 {
 				go playNext(s, i.GuildID)
 			} else {
@@ -218,7 +203,6 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					Content: &content,
 				})
 
-				// Edit the now playing message to include the queue
 				if nowPlaying, ok := nowPlayingMessages[i.GuildID]; ok {
 					newContent := nowPlaying.Content + "\n\n**Queue:**\n"
 					for i, song := range queueList {
@@ -273,14 +257,12 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 		case "stop":
 			if vc, ok := voiceConnections[i.GuildID]; ok {
-				// Clear the queue
 				if queue, ok := queues[i.GuildID]; ok {
 					for !queue.IsEmpty() {
 						queue.Get()
 					}
 				}
 
-				// Stop the current song if there is one
 				if skip, ok := skipChannels[i.GuildID]; ok {
 					skip <- true
 				}
@@ -321,7 +303,6 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					emojiName = "⏸️"
 				}
 
-				// Update the button
 				components := i.Message.Components
 				if len(components) > 0 {
 					if row, ok := components[0].(*discordgo.ActionsRow); ok {
@@ -356,14 +337,12 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			}
 		case "music_stop":
 			if vc, ok := voiceConnections[i.GuildID]; ok {
-				// Clear the queue
 				if queue, ok := queues[i.GuildID]; ok {
 					for !queue.IsEmpty() {
 						queue.Get()
 					}
 				}
 
-				// Stop the current song if there is one
 				if skip, ok := skipChannels[i.GuildID]; ok {
 					skip <- true
 				}
@@ -389,7 +368,6 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 func playNext(s *discordgo.Session, guildID string) {
 	queue, ok := queues[guildID]
 	if !ok || queue.IsEmpty() {
-		// If the queue is empty, start the inactivity timer
 		inactivityTimers[guildID] = time.AfterFunc(30*time.Second, func() {
 			if vc, ok := voiceConnections[guildID]; ok {
 				vc.Disconnect()
@@ -424,6 +402,7 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 		Content:    fmt.Sprintf("Now playing: %s", videoURL),
 		Components: components,
 	})
+
 	if err == nil {
 		nowPlayingMessages[guildID] = nowPlaying
 	}
@@ -514,13 +493,12 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 	vc.Speaking(true)
 	defer vc.Speaking(false)
 
-	// Create a skip channel
 	skip := make(chan bool)
 	skipChannels[guildID] = skip
 
 	log.Println("Reading from dca pipe")
-	// Reading from the DCA stdout pipe and sending it to Discord
 	var opuslen int16
+readLoop:
 	for {
 		select {
 		case <-skip:
@@ -534,29 +512,26 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-			// Read opus frame length from dca file.
 			err = binary.Read(dcaout, binary.LittleEndian, &opuslen)
 			if err != nil {
 				if err != io.EOF && err != io.ErrUnexpectedEOF {
 					log.Printf("Error reading from dca stdout: %v", err)
 				}
-				return
+				break readLoop
 			}
 
-			// Read encoded pcm from dca file.
 			InBuf := make([]byte, opuslen)
 			err = binary.Read(dcaout, binary.LittleEndian, &InBuf)
 			if err != nil {
 				if err != io.EOF && err != io.ErrUnexpectedEOF {
 					log.Printf("Error reading from dca stdout: %v", err)
 				}
-				return
+				break readLoop
 			}
 
 			vc.OpusSend <- InBuf
 		}
 	}
-	log.Println("Finished reading from dca pipe")
 
 	ffmpeg.Wait()
 	dca.Wait()
