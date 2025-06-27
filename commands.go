@@ -24,5 +24,9 @@ var (
 			Name:        "skip",
 			Description: "Skip the current song",
 		},
+		{
+			Name:        "pause",
+			Description: "Pause or resume the current song",
+		},
 	}
 )

@@ -27,6 +27,8 @@ var (
 	queues = make(map[string]*Queue)
 	// A map to store the skip channels for each guild
 	skipChannels = make(map[string]chan bool)
+	// A map to store the paused state for each guild
+	paused = make(map[string]bool)
 )
 
 func main() {
@@ -229,6 +231,31 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				})
 			}
 
+		case "pause":
+			if vc, ok := voiceConnections[i.GuildID]; ok {
+				paused[i.GuildID] = !paused[i.GuildID]
+				vc.Speaking(!paused[i.GuildID])
+				var status string
+				if paused[i.GuildID] {
+					status = "Paused"
+				} else {
+					status = "Resumed"
+				}
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: status,
+					},
+				})
+			} else {
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: "Not in a voice channel.",
+					},
+				})
+			}
+
 		case "stop":
 			if vc, ok := voiceConnections[i.GuildID]; ok {
 				// Clear the queue
@@ -247,6 +274,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					timer.Stop()
 					delete(inactivityTimers, i.GuildID)
 				}
+				time.Sleep(100 * time.Millisecond)
 				vc.Disconnect()
 				delete(voiceConnections, i.GuildID)
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -397,6 +425,7 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 			log.Println("Song skipped")
 			ffmpeg.Process.Kill()
 			dca.Process.Kill()
+			playNext(s, guildID)
 			return
 		default:
 			// Read opus frame length from dca file.
