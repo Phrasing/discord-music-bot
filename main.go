@@ -357,11 +357,7 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			if skip, ok := skipChannels[i.GuildID]; ok {
 				skip <- true
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseUpdateMessage,
-					Data: &discordgo.InteractionResponseData{
-						Content:    "Skipped the current song.",
-						Components: musicButtons,
-					},
+					Type: discordgo.InteractionResponseDeferredMessageUpdate,
 				})
 			}
 		case "music_stop":
