@@ -100,6 +100,14 @@ A simple Discord music bot that plays audio from YouTube.
     SPOTIFY_CLIENT_SECRET=YOUR_CLIENT_SECRET
     ```
 
+5.  **Using a Proxy for `yt-dlp` (Optional):**
+
+    If you need to use a proxy for `yt-dlp`, you can set the `YT_DLP_PROXY` environment variable in your `.env` file:
+
+    ```
+    YT_DLP_PROXY=YOUR_PROXY_URL
+    ```
+
 ## Running the Bot
 
 ```bash
