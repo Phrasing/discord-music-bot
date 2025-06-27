@@ -502,7 +502,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	}
 	streamURL := strings.TrimSpace(string(ytdlout))
 
-	ffmpeg := exec.Command("ffmpeg", "-nostdin", "-i", streamURL, "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1")
+	ffmpeg := exec.Command("ffmpeg", "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-nostdin", "-i", streamURL, "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1")
 	ffmpegerr, err := ffmpeg.StderrPipe()
 	if err != nil {
 		log.Printf("Error getting ffmpeg stderr pipe: %v", err)
