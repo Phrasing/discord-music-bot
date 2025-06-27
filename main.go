@@ -26,6 +26,7 @@ var (
 	skipChannels       = make(map[string]chan bool)
 	paused             = make(map[string]bool)
 	nowPlayingMessages = make(map[string]*discordgo.Message)
+	runningProcesses   = make(map[string][]*os.Process)
 )
 
 func main() {
@@ -270,15 +271,29 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					}
 				}
 
-				if skip, ok := skipChannels[i.GuildID]; ok {
-					skip <- true
+				if procs, ok := runningProcesses[i.GuildID]; ok {
+					for _, proc := range procs {
+						if err := proc.Kill(); err != nil {
+							log.Printf("Failed to kill process %d: %v", proc.Pid, err)
+						}
+					}
+				}
+
+				if nowPlaying, ok := nowPlayingMessages[i.GuildID]; ok {
+					newContent := "Playback stopped."
+					s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+						Content:    &newContent,
+						Components: &[]discordgo.MessageComponent{},
+						ID:         nowPlaying.ID,
+						Channel:    nowPlaying.ChannelID,
+					})
+					delete(nowPlayingMessages, i.GuildID)
 				}
 
 				if timer, ok := inactivityTimers[i.GuildID]; ok {
 					timer.Stop()
 					delete(inactivityTimers, i.GuildID)
 				}
-				time.Sleep(100 * time.Millisecond)
 				vc.Disconnect()
 				delete(voiceConnections, i.GuildID)
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -350,15 +365,29 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 					}
 				}
 
-				if skip, ok := skipChannels[i.GuildID]; ok {
-					skip <- true
+				if procs, ok := runningProcesses[i.GuildID]; ok {
+					for _, proc := range procs {
+						if err := proc.Kill(); err != nil {
+							log.Printf("Failed to kill process %d: %v", proc.Pid, err)
+						}
+					}
+				}
+
+				if nowPlaying, ok := nowPlayingMessages[i.GuildID]; ok {
+					newContent := "Playback stopped."
+					s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+						Content:    &newContent,
+						Components: &[]discordgo.MessageComponent{},
+						ID:         nowPlaying.ID,
+						Channel:    nowPlaying.ChannelID,
+					})
+					delete(nowPlayingMessages, i.GuildID)
 				}
 
 				if timer, ok := inactivityTimers[i.GuildID]; ok {
 					timer.Stop()
 					delete(inactivityTimers, i.GuildID)
 				}
-				time.Sleep(100 * time.Millisecond)
 				vc.Disconnect()
 				delete(voiceConnections, i.GuildID)
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -377,11 +406,10 @@ func playNext(s *discordgo.Session, guildID string, lastSong *Song) {
 	if !ok || queue.IsEmpty() {
 		if lastSong != nil {
 			if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
-				var components []discordgo.MessageComponent
 				newContent := fmt.Sprintf("Playback Finished: %s", lastSong.URL)
 				s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 					Content:    &newContent,
-					Components: &components,
+					Components: &[]discordgo.MessageComponent{},
 					ID:         nowPlaying.ID,
 					Channel:    nowPlaying.ChannelID,
 				})
@@ -517,6 +545,9 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		return
 	}
 	log.Println("dca started")
+
+	runningProcesses[guildID] = []*os.Process{ffmpeg.Process, dca.Process}
+	defer delete(runningProcesses, guildID)
 
 	vc.Speaking(true)
 	defer vc.Speaking(false)
