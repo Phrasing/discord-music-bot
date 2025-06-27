@@ -3,6 +3,28 @@ package main
 import "github.com/bwmarrin/discordgo"
 
 var (
+	musicButtons = []discordgo.MessageComponent{
+		discordgo.ActionsRow{
+			Components: []discordgo.MessageComponent{
+				discordgo.Button{
+					Label:    "Pause/Resume",
+					Style:    discordgo.PrimaryButton,
+					CustomID: "music_pause",
+				},
+				discordgo.Button{
+					Label:    "Skip",
+					Style:    discordgo.PrimaryButton,
+					CustomID: "music_skip",
+				},
+				discordgo.Button{
+					Label:    "Stop",
+					Style:    discordgo.DangerButton,
+					CustomID: "music_stop",
+				},
+			},
+		},
+	}
+
 	commands = []*discordgo.ApplicationCommand{
 		{
 			Name:        "play",

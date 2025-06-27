@@ -87,7 +87,8 @@ func main() {
 }
 
 func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.Type == discordgo.InteractionApplicationCommand {
+	switch i.Type {
+	case discordgo.InteractionApplicationCommand:
 		switch i.ApplicationCommandData().Name {
 		case "play":
 			// Respond to the interaction
@@ -292,6 +293,64 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				})
 			}
 		}
+	case discordgo.InteractionMessageComponent:
+		switch i.MessageComponentData().CustomID {
+		case "music_pause":
+			if vc, ok := voiceConnections[i.GuildID]; ok {
+				paused[i.GuildID] = !paused[i.GuildID]
+				vc.Speaking(!paused[i.GuildID])
+				var status string
+				if paused[i.GuildID] {
+					status = "Paused"
+				} else {
+					status = "Resumed"
+				}
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseUpdateMessage,
+					Data: &discordgo.InteractionResponseData{
+						Content: status,
+					},
+				})
+			}
+		case "music_skip":
+			if skip, ok := skipChannels[i.GuildID]; ok {
+				skip <- true
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseUpdateMessage,
+					Data: &discordgo.InteractionResponseData{
+						Content: "Skipped the current song.",
+					},
+				})
+			}
+		case "music_stop":
+			if vc, ok := voiceConnections[i.GuildID]; ok {
+				// Clear the queue
+				if queue, ok := queues[i.GuildID]; ok {
+					for !queue.IsEmpty() {
+						queue.Get()
+					}
+				}
+
+				// Stop the current song if there is one
+				if skip, ok := skipChannels[i.GuildID]; ok {
+					skip <- true
+				}
+
+				if timer, ok := inactivityTimers[i.GuildID]; ok {
+					timer.Stop()
+					delete(inactivityTimers, i.GuildID)
+				}
+				time.Sleep(100 * time.Millisecond)
+				vc.Disconnect()
+				delete(voiceConnections, i.GuildID)
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseUpdateMessage,
+					Data: &discordgo.InteractionResponseData{
+						Content: "Stopped playing and left the voice channel.",
+					},
+				})
+			}
+		}
 	}
 }
 
@@ -324,7 +383,13 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 		return
 	}
 
-	s.ChannelMessageSend(channelID, fmt.Sprintf("Now playing: %s", videoURL))
+	_, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content:    fmt.Sprintf("Now playing: %s", videoURL),
+		Components: musicButtons,
+	})
+	if err != nil {
+		log.Printf("Error sending now playing message: %v", err)
+	}
 
 	ytdlArgs := []string{
 		"--get-url",
@@ -428,6 +493,10 @@ func playSound(s *discordgo.Session, guildID, channelID, videoURL string) {
 			playNext(s, guildID)
 			return
 		default:
+			if paused[guildID] {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
 			// Read opus frame length from dca file.
 			err = binary.Read(dcaout, binary.LittleEndian, &opuslen)
 			if err != nil {

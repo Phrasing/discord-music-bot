@@ -112,3 +112,5 @@ go run .
 -   `/stop`: Stops the music, clears the queue, and disconnects the bot from the voice channel.
 -   `/skip`: Skips the current song and plays the next one in the queue.
 -   `/pause`: Pauses or resumes the current song.
+
+You can also use the buttons on the "Now Playing" message to control the music.
