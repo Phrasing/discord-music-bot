@@ -87,7 +87,7 @@ A simple Discord music bot that plays audio from YouTube.
     COOKIES_PATH=cookies.txt
     ```
 
-4.  **Set up Spotify:**
+4.  **Set up Spotify (Optional):**
 
     -   Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/).
     -   Click "Create an App".

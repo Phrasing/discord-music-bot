@@ -18,19 +18,21 @@ var (
 func initSpotify() {
 	config := LoadConfig()
 
-	authConfig := &clientcredentials.Config{
-		ClientID:     config.SpotifyClientID,
-		ClientSecret: config.SpotifyClientSecret,
-		TokenURL:     spotify.TokenURL,
-	}
+	if config.SpotifyClientID != "" && config.SpotifyClientSecret != "" {
+		authConfig := &clientcredentials.Config{
+			ClientID:     config.SpotifyClientID,
+			ClientSecret: config.SpotifyClientSecret,
+			TokenURL:     spotify.TokenURL,
+		}
 
-	accessToken, err := authConfig.Token(context.Background())
-	if err != nil {
-		log.Fatalf("error retrieving access token: %v", err)
-	}
+		accessToken, err := authConfig.Token(context.Background())
+		if err != nil {
+			log.Printf("error retrieving spotify access token: %v", err)
+		}
 
-	client := spotify.NewAuthenticator("").NewClient(accessToken)
-	spotifyClient = client
+		client := spotify.NewAuthenticator("").NewClient(accessToken)
+		spotifyClient = client
+	}
 }
 
 func getTrackName(trackID spotify.ID) (string, error) {
