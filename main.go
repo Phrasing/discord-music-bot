@@ -594,8 +594,6 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 					}
 					s.ChannelMessageEdit(nowPlaying.ChannelID, nowPlaying.ID, newContent)
 				}
-			case <-skip:
-				return
 			case <-done:
 				return
 			}
