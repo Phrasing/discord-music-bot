@@ -375,16 +375,18 @@ func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 func playNext(s *discordgo.Session, guildID string, lastSong *Song) {
 	queue, ok := queues[guildID]
 	if !ok || queue.IsEmpty() {
-		if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
-			var components []discordgo.MessageComponent
-			newContent := fmt.Sprintf("Playback Finished: %s", lastSong.URL)
-			s.ChannelMessageEditComplex(&discordgo.MessageEdit{
-				Content:    &newContent,
-				Components: &components,
-				ID:         nowPlaying.ID,
-				Channel:    nowPlaying.ChannelID,
-			})
-			delete(nowPlayingMessages, guildID)
+		if lastSong != nil {
+			if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
+				var components []discordgo.MessageComponent
+				newContent := fmt.Sprintf("Playback Finished: %s", lastSong.URL)
+				s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+					Content:    &newContent,
+					Components: &components,
+					ID:         nowPlaying.ID,
+					Channel:    nowPlaying.ChannelID,
+				})
+				delete(nowPlayingMessages, guildID)
+			}
 		}
 
 		inactivityTimers[guildID] = time.AfterFunc(30*time.Second, func() {
@@ -521,6 +523,8 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 
 	skip := make(chan bool)
 	skipChannels[guildID] = skip
+	done := make(chan bool)
+	defer close(done)
 
 	log.Println("Reading from dca pipe")
 
@@ -556,6 +560,8 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 					s.ChannelMessageEdit(nowPlaying.ChannelID, nowPlaying.ID, newContent)
 				}
 			case <-skip:
+				return
+			case <-done:
 				return
 			}
 		}
