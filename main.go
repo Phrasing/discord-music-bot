@@ -523,7 +523,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 
 	log.Println("Reading from dca pipe")
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	startTime := time.Now()
 	var pausedTime time.Time
