@@ -73,16 +73,21 @@ A simple Discord music bot that plays audio from YouTube.
     BOT_TOKEN=YOUR_BOT_TOKEN
     ```
 
-3.  **Get YouTube Cookies:**
+3.  **Set up YouTube Cookies:**
 
-    To bypass YouTube's bot detection, you need to provide a `cookies.txt` file.
+    To bypass YouTube's bot detection, you need to provide a `cookies.txt` file. You can start by copying the example file:
+
+    ```bash
+    cp cookies.txt.example cookies.txt
+    ```
+
+    In many cases, `yt-dlp` can automatically generate the necessary cookies. However, if you encounter issues, you may need to provide your own cookies by following these steps:
 
     -   Install a browser extension that can export cookies in the Netscape format, such as [Cookie Editor](https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) for Chrome.
     -   Go to [YouTube](https://www.youtube.com) and make sure you are logged in.
-    -   Use the extension to export your cookies for the `youtube.com` domain.
-    -   Save the exported cookies as `cookies.txt` in the root of the project.
+    -   Use the extension to export your cookies for the `youtube.com` domain and overwrite the contents of `cookies.txt`.
 
-    Update your `.env` file with the path to the cookies file:
+    Finally, update your `.env` file with the path to the cookies file:
 
     ```
     COOKIES_PATH=cookies.txt
