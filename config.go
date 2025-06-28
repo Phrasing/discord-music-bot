@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -18,7 +20,7 @@ type Config struct {
 	SpotifyClientSecret string
 	YtDlpProxy          string
 
-	// Opus Encoder Settings (all available methods)
+	// Opus Encoder Settings
 	OpusBitrate        int  // SetBitrate(bits int)
 	OpusComplexity     int  // SetComplexity(complexity int)
 	OpusInBandFEC      bool // SetInBandFEC(fec bool)
@@ -26,7 +28,31 @@ type Config struct {
 	OpusDTX            bool // SetDTX(dtx bool) - Discontinuous Transmission
 
 	// Audio Processing Settings
-	BufferSize int // Frame size in samples per channel
+	BufferSize         int     // Frame size in samples per channel
+	AudioVolume        float64 // Volume multiplier (0.0-2.0)
+	AudioNormalization bool    // Enable loudness normalization
+
+	// Advanced Audio Processing
+	AudioCompressor     bool    // Enable dynamic range compression
+	CompressorThreshold float64 // Compressor threshold in dB
+	CompressorRatio     float64 // Compression ratio
+	CompressorAttack    int     // Attack time in ms
+	CompressorRelease   int     // Release time in ms
+
+	// Resampling Settings
+	EnableResampling  bool // Enable high-quality resampling
+	ResamplingQuality int  // SoX resampler precision (16-33)
+
+	// FFmpeg Performance Settings
+	FFmpegThreadQueueSize int    // Packet queue size
+	FFmpegBufferSize      string // Output buffer size (e.g., "512k")
+	FFmpegRTBufferSize    string // Real-time buffer size (e.g., "256M")
+	FFmpegProbeSize       int    // Probe size in bytes
+	FFmpegAnalyzeDuration int    // Analyze duration in microseconds (0 = disabled)
+	FFmpegReconnectDelay  int    // Max reconnection delay in seconds
+
+	// Quality Preset
+	QualityPreset string // "performance", "balanced", "quality"
 }
 
 func LoadConfig() *Config {
@@ -34,6 +60,9 @@ func LoadConfig() *Config {
 	if err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
+
+	// Load quality preset first to set defaults
+	preset := getEnvAsString("QUALITY_PRESET", "balanced")
 
 	config := &Config{
 		// Discord Bot Configuration
@@ -46,15 +75,42 @@ func LoadConfig() *Config {
 		YtDlpProxy:          os.Getenv("YT_DLP_PROXY"),
 
 		// Opus Encoder Settings - Optimized for music streaming on Discord
-		OpusBitrate:        getEnvAsInt("OPUS_BITRATE", 128000),     // 128kbps - Discord's max for boosted servers
-		OpusComplexity:     getEnvAsInt("OPUS_COMPLEXITY", 9),       // 0-10: 9 is nearly as good as 10 with less CPU
-		OpusInBandFEC:      getEnvAsBool("OPUS_INBAND_FEC", true),   // Forward Error Correction - important for streaming
-		OpusPacketLossPerc: getEnvAsInt("OPUS_PACKET_LOSS_PERC", 5), // Expected packet loss % - 5% is good balance
-		OpusDTX:            getEnvAsBool("OPUS_DTX", false),         // DTX off for music (only useful for speech)
+		OpusBitrate:        getEnvAsInt("OPUS_BITRATE", 128000),     // 128kbps - Discord's max
+		OpusComplexity:     getEnvAsInt("OPUS_COMPLEXITY", 9),       // 9 for better CPU efficiency
+		OpusInBandFEC:      getEnvAsBool("OPUS_INBAND_FEC", true),   // Forward Error Correction
+		OpusPacketLossPerc: getEnvAsInt("OPUS_PACKET_LOSS_PERC", 5), // Expected packet loss %
+		OpusDTX:            getEnvAsBool("OPUS_DTX", false),         // DTX off for music
 
 		// Audio Processing Settings
-		BufferSize: getEnvAsInt("BUFFER_SIZE", 960), // 960 samples = 20ms @ 48kHz
+		BufferSize:         getEnvAsInt("BUFFER_SIZE", 960),           // 960 samples = 20ms @ 48kHz
+		AudioVolume:        getEnvAsFloat("AUDIO_VOLUME", 1.0),        // Default: no change
+		AudioNormalization: getEnvAsBool("AUDIO_NORMALIZATION", true), // EBU R128 normalization
+
+		// Advanced Audio Processing
+		AudioCompressor:     getEnvAsBool("AUDIO_COMPRESSOR", true),       // Light compression by default
+		CompressorThreshold: getEnvAsFloat("COMPRESSOR_THRESHOLD", -20.0), // -20dB threshold
+		CompressorRatio:     getEnvAsFloat("COMPRESSOR_RATIO", 4.0),       // 4:1 ratio
+		CompressorAttack:    getEnvAsInt("COMPRESSOR_ATTACK", 5),          // 5ms attack
+		CompressorRelease:   getEnvAsInt("COMPRESSOR_RELEASE", 50),        // 50ms release
+
+		// Resampling Settings
+		EnableResampling:  getEnvAsBool("ENABLE_RESAMPLING", true), // High-quality resampling
+		ResamplingQuality: getEnvAsInt("RESAMPLING_QUALITY", 28),   // SoX HQ (16-33)
+
+		// FFmpeg Performance Settings
+		FFmpegThreadQueueSize: getEnvAsInt("FFMPEG_THREAD_QUEUE_SIZE", 512),
+		FFmpegBufferSize:      getEnvAsString("FFMPEG_BUFFER_SIZE", "512k"),
+		FFmpegRTBufferSize:    getEnvAsString("FFMPEG_RT_BUFFER_SIZE", "256M"),
+		FFmpegProbeSize:       getEnvAsInt("FFMPEG_PROBE_SIZE", 32),
+		FFmpegAnalyzeDuration: getEnvAsInt("FFMPEG_ANALYZE_DURATION", 0),
+		FFmpegReconnectDelay:  getEnvAsInt("FFMPEG_RECONNECT_DELAY", 5),
+
+		// Quality Preset
+		QualityPreset: preset,
 	}
+
+	// Apply preset defaults
+	config.applyPreset()
 
 	// Validate configuration
 	config.Validate()
@@ -82,6 +138,62 @@ func getEnvAsBool(key string, fallback bool) bool {
 	return fallback
 }
 
+func getEnvAsFloat(key string, fallback float64) float64 {
+	if value, ok := os.LookupEnv(key); ok {
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			return f
+		}
+		log.Printf("Warning: Invalid float value for %s: %s, using default: %.2f", key, value, fallback)
+	}
+	return fallback
+}
+
+func getEnvAsString(key string, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+// applyPreset applies configuration based on quality preset
+func (c *Config) applyPreset() {
+	// Only apply if not overridden by environment variables
+	switch c.QualityPreset {
+	case "performance":
+		// Optimize for low CPU usage
+		if os.Getenv("OPUS_COMPLEXITY") == "" {
+			c.OpusComplexity = 5
+		}
+		if os.Getenv("ENABLE_RESAMPLING") == "" {
+			c.EnableResampling = false
+		}
+		if os.Getenv("AUDIO_COMPRESSOR") == "" {
+			c.AudioCompressor = false
+		}
+		if os.Getenv("FFMPEG_BUFFER_SIZE") == "" {
+			c.FFmpegBufferSize = "256k"
+		}
+
+	case "quality":
+		// Maximum quality settings
+		if os.Getenv("OPUS_COMPLEXITY") == "" {
+			c.OpusComplexity = 10
+		}
+		if os.Getenv("RESAMPLING_QUALITY") == "" {
+			c.ResamplingQuality = 33
+		}
+		if os.Getenv("FFMPEG_BUFFER_SIZE") == "" {
+			c.FFmpegBufferSize = "1M"
+		}
+		if os.Getenv("FFMPEG_RT_BUFFER_SIZE") == "" {
+			c.FFmpegRTBufferSize = "512M"
+		}
+
+	case "balanced":
+		// Default balanced settings (already set)
+	}
+}
+
 // Validate ensures configuration values are within acceptable ranges
 func (c *Config) Validate() error {
 	// Validate Opus complexity (0-10)
@@ -90,8 +202,7 @@ func (c *Config) Validate() error {
 		c.OpusComplexity = 9
 	}
 
-	// Validate bitrate (6-510 kbps per channel, so 12-1020 kbps for stereo)
-	// Discord limits: 96kbps (normal) or 128kbps (boosted)
+	// Validate bitrate
 	if c.OpusBitrate < 12000 || c.OpusBitrate > 128000 {
 		log.Printf("Warning: OpusBitrate %d is outside Discord range (12000-128000), using 128000", c.OpusBitrate)
 		c.OpusBitrate = 128000
@@ -104,7 +215,6 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate buffer size for 48kHz
-	// Common frame sizes at 48kHz: 120 (2.5ms), 240 (5ms), 480 (10ms), 960 (20ms), 1920 (40ms), 2880 (60ms)
 	validBufferSizes := map[int]string{
 		120:  "2.5ms",
 		240:  "5ms",
@@ -114,10 +224,89 @@ func (c *Config) Validate() error {
 		2880: "60ms",
 	}
 
-	if _, ok := validBufferSizes[c.BufferSize]; !ok {
+	if duration, ok := validBufferSizes[c.BufferSize]; ok {
+		log.Printf("Using buffer size: %d samples (%s per frame)", c.BufferSize, duration)
+	} else {
 		log.Printf("Warning: BufferSize %d is not a standard Opus frame size, using 960 (20ms)", c.BufferSize)
 		c.BufferSize = 960
 	}
 
+	// Validate audio volume (0.0-2.0 recommended)
+	if c.AudioVolume < 0.0 || c.AudioVolume > 10.0 {
+		log.Printf("Warning: AudioVolume %.2f is outside safe range (0.0-10.0), using 1.0", c.AudioVolume)
+		c.AudioVolume = 1.0
+	}
+
+	// Validate compressor settings
+	if c.CompressorThreshold > 0 {
+		log.Printf("Warning: CompressorThreshold %.2f should be negative (in dB), using -20.0", c.CompressorThreshold)
+		c.CompressorThreshold = -20.0
+	}
+
+	if c.CompressorRatio < 1.0 || c.CompressorRatio > 20.0 {
+		log.Printf("Warning: CompressorRatio %.2f is outside typical range (1.0-20.0), using 4.0", c.CompressorRatio)
+		c.CompressorRatio = 4.0
+	}
+
+	// Validate resampling quality (16-33 for SoX)
+	if c.ResamplingQuality < 16 || c.ResamplingQuality > 33 {
+		log.Printf("Warning: ResamplingQuality %d is outside SoX range (16-33), using 28", c.ResamplingQuality)
+		c.ResamplingQuality = 28
+	}
+
+	// Validate FFmpeg settings
+	if c.FFmpegThreadQueueSize < 128 || c.FFmpegThreadQueueSize > 2048 {
+		log.Printf("Warning: FFmpegThreadQueueSize %d is outside recommended range (128-2048), using 512", c.FFmpegThreadQueueSize)
+		c.FFmpegThreadQueueSize = 512
+	}
+
+	if c.FFmpegReconnectDelay < 1 || c.FFmpegReconnectDelay > 60 {
+		log.Printf("Warning: FFmpegReconnectDelay %d is outside reasonable range (1-60), using 5", c.FFmpegReconnectDelay)
+		c.FFmpegReconnectDelay = 5
+	}
+
+	// Log active preset
+	log.Printf("Using quality preset: %s", c.QualityPreset)
+
 	return nil
+}
+
+// BuildAudioFilter constructs the FFmpeg audio filter chain based on config
+func (c *Config) BuildAudioFilter() string {
+	filters := []string{}
+
+	// Resampling (first in chain for efficiency)
+	if c.EnableResampling {
+		filters = append(filters, fmt.Sprintf(
+			"aresample=resampler=soxr:precision=%d:dither_method=triangular",
+			c.ResamplingQuality,
+		))
+	}
+
+	// Dynamic range compression
+	if c.AudioCompressor {
+		filters = append(filters, fmt.Sprintf(
+			"acompressor=threshold=%.1f:ratio=%.1f:attack=%d:release=%d:makeup=2",
+			c.CompressorThreshold,
+			c.CompressorRatio,
+			c.CompressorAttack,
+			c.CompressorRelease,
+		))
+	}
+
+	// Loudness normalization (EBU R128)
+	if c.AudioNormalization {
+		filters = append(filters, "loudnorm=I=-16:TP=-1.5:LRA=11")
+	}
+
+	// Volume adjustment (last in chain)
+	if c.AudioVolume != 1.0 {
+		filters = append(filters, fmt.Sprintf("volume=%.2f", c.AudioVolume))
+	}
+
+	if len(filters) == 0 {
+		return ""
+	}
+
+	return strings.Join(filters, ",")
 }
