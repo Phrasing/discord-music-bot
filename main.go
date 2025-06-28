@@ -2,16 +2,16 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,598 +20,603 @@ import (
 	"gopkg.in/hraban/opus.v2"
 )
 
-var (
-	voiceConnections   = make(map[string]*discordgo.VoiceConnection)
-	inactivityTimers   = make(map[string]*time.Timer)
-	queues             = make(map[string]*Queue)
-	skipChannels       = make(map[string]chan bool)
-	paused             = make(map[string]bool)
-	nowPlayingMessages = make(map[string]*discordgo.Message)
-	runningProcesses   = make(map[string][]*os.Process)
-	queueMessages      = make(map[string]string)
-)
+// Bot encapsulates all bot state
+type Bot struct {
+	session *discordgo.Session
+	guilds  map[string]*GuildState
+	mu      sync.RWMutex
+}
+
+// GuildState holds per-guild state
+type GuildState struct {
+	voice         *discordgo.VoiceConnection
+	queue         *Queue
+	skipChan      chan bool
+	paused        bool
+	nowPlaying    *discordgo.Message
+	process       *os.Process
+	inactiveTimer *time.Timer
+	mu            sync.Mutex
+}
+
+// VideoInfo holds video metadata
+type VideoInfo struct {
+	URL      string        `json:"url"`
+	Title    string        `json:"title"`
+	Duration time.Duration `json:"duration"`
+}
 
 func main() {
-	f, err := os.OpenFile("bot.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatalf("error opening file: %v", err)
+	// Setup logging
+	if err := setupLogging(); err != nil {
+		log.Fatal(err)
 	}
-	defer f.Close()
-
-	log.SetOutput(io.MultiWriter(os.Stdout, f))
 
 	initSpotify()
 	config := LoadConfig()
 
-	if config.BotToken == "" {
-		log.Fatal("Bot token not found. Please set the BOT_TOKEN environment variable.")
-	}
-
-	dg, err := discordgo.New("Bot " + config.BotToken)
+	bot, err := NewBot(config.BotToken)
 	if err != nil {
-		log.Fatal("Error creating Discord session: ", err)
+		log.Fatal(err)
 	}
 
-	dg.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
-		log.Println("Bot is ready.")
-	})
-	dg.AddHandler(interactionCreate)
-
-	dg.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsGuildVoiceStates
-
-	err = dg.Open()
-	if err != nil {
-		log.Fatal("Error opening connection: ", err)
+	if err := bot.Start(); err != nil {
+		log.Fatal(err)
 	}
 
-	log.Println("Registering commands...")
-	_, err = dg.ApplicationCommandBulkOverwrite(dg.State.User.ID, "", commands)
-	if err != nil {
-		log.Fatalf("Could not register commands: %v", err)
-	}
-	log.Println("Commands registered.")
+	// Start update checker
+	go checkYtDlpUpdates()
 
-	go startUpdateChecker()
-
-	fmt.Println("Bot is now running. Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
 
-	dg.Close()
+	bot.Stop()
 }
 
-func startUpdateChecker() {
-	runUpdateCheck := func() {
-		log.Println("Checking for yt-dlp updates...")
-		cmd := exec.Command("pipx", "upgrade", "--pip-args=--pre", "yt-dlp")
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Printf("Error updating yt-dlp: %v\n%s", err, output)
+func NewBot(token string) (*Bot, error) {
+	if token == "" {
+		return nil, fmt.Errorf("bot token not found")
+	}
+
+	dg, err := discordgo.New("Bot " + token)
+	if err != nil {
+		return nil, fmt.Errorf("creating discord session: %w", err)
+	}
+
+	bot := &Bot{
+		session: dg,
+		guilds:  make(map[string]*GuildState),
+	}
+
+	dg.AddHandler(bot.ready)
+	dg.AddHandler(bot.interactionCreate)
+	dg.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsGuildVoiceStates
+
+	return bot, nil
+}
+
+func (b *Bot) Start() error {
+	if err := b.session.Open(); err != nil {
+		return fmt.Errorf("opening connection: %w", err)
+	}
+
+	log.Println("Registering commands...")
+	if _, err := b.session.ApplicationCommandBulkOverwrite(b.session.State.User.ID, "", commands); err != nil {
+		return fmt.Errorf("registering commands: %w", err)
+	}
+
+	return nil
+}
+
+func (b *Bot) Stop() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for guildID, state := range b.guilds {
+		state.cleanup()
+		delete(b.guilds, guildID)
+	}
+
+	b.session.Close()
+}
+
+func (b *Bot) getOrCreateGuildState(guildID string) *GuildState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if state, ok := b.guilds[guildID]; ok {
+		return state
+	}
+
+	state := &GuildState{
+		queue: NewQueue(),
+	}
+	b.guilds[guildID] = state
+	return state
+}
+
+func (b *Bot) ready(s *discordgo.Session, r *discordgo.Ready) {
+	log.Println("Bot is ready")
+}
+
+func (b *Bot) handleComponent(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	state := b.getOrCreateGuildState(i.GuildID)
+
+	switch i.MessageComponentData().CustomID {
+	case "music_pause":
+		b.handlePauseButton(s, i, state)
+	case "music_skip":
+		b.handleSkipButton(s, i, state)
+	case "music_stop":
+		b.handleStopButton(s, i, state)
+	}
+}
+
+func (b *Bot) handleSkip(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	state := b.getOrCreateGuildState(i.GuildID)
+
+	if state.skipChan != nil {
+		select {
+		case state.skipChan <- true:
+			respondEphemeral(s, i, "Skipped the current song")
+		default:
+			respondEphemeral(s, i, "Nothing to skip")
+		}
+	} else {
+		respondEphemeral(s, i, "Nothing to skip")
+	}
+}
+
+func (b *Bot) handlePause(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	state := b.getOrCreateGuildState(i.GuildID)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if state.voice == nil {
+		respondEphemeral(s, i, "Not in a voice channel")
+		return
+	}
+
+	state.paused = !state.paused
+	state.voice.Speaking(!state.paused)
+
+	status := "Resumed"
+	if state.paused {
+		status = "Paused"
+	}
+	respondEphemeral(s, i, status)
+}
+
+func (b *Bot) handleStop(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	state := b.getOrCreateGuildState(i.GuildID)
+
+	// Clear queue
+	for !state.queue.IsEmpty() {
+		state.queue.Get()
+	}
+
+	// Kill process if running
+	if state.process != nil {
+		state.process.Kill()
+	}
+
+	// Update now playing message
+	if state.nowPlaying != nil {
+		newContent := "Playback stopped."
+		s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+			Content:    &newContent,
+			Components: &[]discordgo.MessageComponent{},
+			ID:         state.nowPlaying.ID,
+			Channel:    state.nowPlaying.ChannelID,
+		})
+		state.nowPlaying = nil
+	}
+
+	// Disconnect
+	b.disconnectFromGuild(i.GuildID)
+	respondEphemeral(s, i, "Stopped playing and left the voice channel")
+}
+
+func (b *Bot) handlePauseButton(s *discordgo.Session, i *discordgo.InteractionCreate, state *GuildState) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if state.voice == nil {
+		return
+	}
+
+	state.paused = !state.paused
+	state.voice.Speaking(!state.paused)
+
+	// Update button emoji
+	emojiName := "⏸️"
+	if state.paused {
+		emojiName = "▶️"
+	}
+
+	components := i.Message.Components
+	if len(components) > 0 {
+		if row, ok := components[0].(*discordgo.ActionsRow); ok {
+			for _, component := range row.Components {
+				if button, ok := component.(*discordgo.Button); ok && button.CustomID == "music_pause" {
+					button.Emoji.Name = emojiName
+				}
+			}
+		}
+	}
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Content:    i.Message.Content,
+			Components: components,
+		},
+	})
+}
+
+func (b *Bot) handleSkipButton(s *discordgo.Session, i *discordgo.InteractionCreate, state *GuildState) {
+	if state.skipChan != nil {
+		select {
+		case state.skipChan <- true:
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseDeferredMessageUpdate,
+			})
+		default:
+		}
+	}
+}
+
+func (b *Bot) handleStopButton(s *discordgo.Session, i *discordgo.InteractionCreate, state *GuildState) {
+	// Clear queue
+	for !state.queue.IsEmpty() {
+		state.queue.Get()
+	}
+
+	// Kill process
+	if state.process != nil {
+		state.process.Kill()
+	}
+
+	// Update message
+	newContent := "Playback stopped."
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Content: newContent,
+		},
+	})
+
+	// Disconnect
+	b.disconnectFromGuild(i.GuildID)
+}
+
+func (b *Bot) disconnectFromGuild(guildID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if state, ok := b.guilds[guildID]; ok {
+		state.cleanup()
+		delete(b.guilds, guildID)
+	}
+}
+
+func (b *Bot) updateNowPlaying(s *discordgo.Session, state *GuildState, song *Song, done <-chan bool) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	startTime := time.Now()
+	var pausedTime time.Time
+	var totalPausedDuration time.Duration
+
+	for {
+		select {
+		case <-ticker.C:
+			state.mu.Lock()
+			if state.nowPlaying == nil {
+				state.mu.Unlock()
+				return
+			}
+			paused := state.paused
+			state.mu.Unlock()
+
+			// Handle pause timing
+			if paused {
+				if pausedTime.IsZero() {
+					pausedTime = time.Now()
+				}
+				continue
+			} else if !pausedTime.IsZero() {
+				totalPausedDuration += time.Since(pausedTime)
+				pausedTime = time.Time{}
+			}
+
+			content := formatNowPlaying(song, time.Since(startTime)-totalPausedDuration)
+
+			// Add queue info
+			queueList := state.queue.List()
+			if len(queueList) > 0 {
+				content += "\n\n**Queue:**\n"
+				for i, qSong := range queueList {
+					if i >= 5 {
+						content += fmt.Sprintf("... and %d more", len(queueList)-5)
+						break
+					}
+					content += fmt.Sprintf("%d. %s\n", i+1, qSong.Title)
+				}
+			}
+
+			// Determine components
+			components := musicButtonsNoSkip
+			if !state.queue.IsEmpty() {
+				components = musicButtons
+			}
+
+			s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+				Content:    &content,
+				Components: &components,
+				ID:         state.nowPlaying.ID,
+				Channel:    state.nowPlaying.ChannelID,
+			})
+
+		case <-done:
 			return
 		}
-		log.Printf("yt-dlp update check complete:\n%s", output)
 	}
-
-	go func() {
-		runUpdateCheck() // Initial check on startup
-		ticker := time.NewTicker(24 * time.Hour)
-		for {
-			<-ticker.C
-			runUpdateCheck()
-		}
-	}()
 }
 
-func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func resolveSpotifyURL(url string) (string, error) {
+	// Extract track ID from Spotify URL
+	parts := strings.Split(url, "track/")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("invalid Spotify URL")
+	}
+
+	trackIDString := parts[1]
+	trackID := spotify.ID(strings.Split(trackIDString, "?")[0])
+
+	// Get track name from Spotify
+	trackName, err := getTrackName(trackID)
+	if err != nil {
+		return "", fmt.Errorf("getting track name: %w", err)
+	}
+
+	// Search on YouTube
+	return searchYoutube(trackName)
+}
+
+func (b *Bot) interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch i.Type {
 	case discordgo.InteractionApplicationCommand:
-		switch i.ApplicationCommandData().Name {
-		case "play":
-			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: "Searching for the song...",
-					Flags:   discordgo.MessageFlagsEphemeral,
-				},
-			})
-			if err != nil {
-				log.Println("Error responding to interaction: ", err)
-			}
-
-			query := i.ApplicationCommandData().Options[0].StringValue()
-			var videoURL string
-
-			if strings.Contains(query, "spotify.com") {
-				trackIDString := strings.Split(query, "track/")[1]
-				trackID := spotify.ID(strings.Split(trackIDString, "?")[0])
-				trackName, err := getTrackName(trackID)
-				if err != nil {
-					log.Printf("Error getting track name: %v", err)
-					content := "Error getting track name from Spotify."
-					s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-						Content: &content,
-					})
-					return
-				}
-
-				videoURL, err = searchYoutube(trackName)
-				if err != nil {
-					log.Printf("Error searching youtube: %v", err)
-					content := "Error searching for the song on YouTube."
-					s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-						Content: &content,
-					})
-					return
-				}
-			} else if strings.Contains(query, "soundcloud.com") {
-				videoURL = query
-			} else if !strings.HasPrefix(query, "http") {
-				videoURL, err = searchYoutube(query)
-				if err != nil {
-					log.Printf("Error searching youtube: %v", err)
-					content := "Error searching for the song on YouTube."
-					s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-						Content: &content,
-					})
-					return
-				}
-			} else {
-				videoURL = query
-			}
-
-			guild, err := s.State.Guild(i.GuildID)
-			if err != nil {
-				log.Println("Error getting guild: ", err)
-				return
-			}
-
-			var voiceChannelID string
-			for _, vs := range guild.VoiceStates {
-				if vs.UserID == i.Member.User.ID {
-					voiceChannelID = vs.ChannelID
-					break
-				}
-			}
-
-			if voiceChannelID == "" {
-				content := "You are not in a voice channel."
-				s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-					Content: &content,
-				})
-				return
-			}
-
-			vc, ok := voiceConnections[i.GuildID]
-			if !ok {
-				vc, err = s.ChannelVoiceJoin(i.GuildID, voiceChannelID, false, true)
-				if err != nil {
-					log.Println("Error joining voice channel: ", err)
-					content := "Error joining voice channel."
-					s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-						Content: &content,
-					})
-					return
-				}
-				voiceConnections[i.GuildID] = vc
-			}
-
-			if timer, ok := inactivityTimers[i.GuildID]; ok {
-				timer.Stop()
-				delete(inactivityTimers, i.GuildID)
-			}
-
-			if _, ok := queues[i.GuildID]; !ok {
-				queues[i.GuildID] = NewQueue()
-			}
-			queue := queues[i.GuildID]
-
-			duration, err := getDuration(videoURL)
-			if err != nil {
-				log.Printf("Error getting duration: %v", err)
-			}
-
-			title, err := getVideoTitle(videoURL)
-			if err != nil {
-				log.Printf("Error getting video title: %v", err)
-			}
-
-			song := &Song{
-				URL:       videoURL,
-				ChannelID: i.ChannelID,
-				Duration:  duration,
-				Title:     title,
-			}
-			queue.Add(song)
-
-			if len(vc.OpusSend) == 0 {
-				go playNext(s, i.GuildID, nil)
-			} else {
-				queueList := queue.List()
-				var content string
-				content = "Added to queue:\n"
-				for i, song := range queueList {
-					content += fmt.Sprintf("%d. %s\n", i+1, song.URL)
-				}
-				s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-					Content: &content,
-				})
-			}
-
-		case "skip":
-			if skip, ok := skipChannels[i.GuildID]; ok {
-				skip <- true
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "Skipped the current song.",
-						Flags:   discordgo.MessageFlagsEphemeral,
-					},
-				})
-			} else {
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "Nothing to skip.",
-						Flags:   discordgo.MessageFlagsEphemeral,
-					},
-				})
-			}
-
-		case "pause":
-			if vc, ok := voiceConnections[i.GuildID]; ok {
-				paused[i.GuildID] = !paused[i.GuildID]
-				vc.Speaking(!paused[i.GuildID])
-				var status string
-				if paused[i.GuildID] {
-					status = "Paused"
-				} else {
-					status = "Resumed"
-				}
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: status,
-						Flags:   discordgo.MessageFlagsEphemeral,
-					},
-				})
-			} else {
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "Not in a voice channel.",
-						Flags:   discordgo.MessageFlagsEphemeral,
-					},
-				})
-			}
-
-		case "stop":
-			if vc, ok := voiceConnections[i.GuildID]; ok {
-				delete(queueMessages, i.GuildID)
-				if queue, ok := queues[i.GuildID]; ok {
-					for !queue.IsEmpty() {
-						queue.Get()
-					}
-				}
-
-				if procs, ok := runningProcesses[i.GuildID]; ok {
-					for _, proc := range procs {
-						if err := proc.Kill(); err != nil {
-							log.Printf("Failed to kill process %d: %v", proc.Pid, err)
-						}
-					}
-				}
-
-				if nowPlaying, ok := nowPlayingMessages[i.GuildID]; ok {
-					newContent := "Playback stopped."
-					s.ChannelMessageEditComplex(&discordgo.MessageEdit{
-						Content:    &newContent,
-						Components: &[]discordgo.MessageComponent{},
-						ID:         nowPlaying.ID,
-						Channel:    nowPlaying.ChannelID,
-					})
-					delete(nowPlayingMessages, i.GuildID)
-				}
-
-				if timer, ok := inactivityTimers[i.GuildID]; ok {
-					timer.Stop()
-					delete(inactivityTimers, i.GuildID)
-				}
-				vc.Disconnect()
-				delete(voiceConnections, i.GuildID)
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "Stopped playing and left the voice channel.",
-						Flags:   discordgo.MessageFlagsEphemeral,
-					},
-				})
-			} else {
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "Not currently in a voice channel.",
-						Flags:   discordgo.MessageFlagsEphemeral,
-					},
-				})
-			}
-		}
+		b.handleCommand(s, i)
 	case discordgo.InteractionMessageComponent:
-		switch i.MessageComponentData().CustomID {
-		case "music_pause":
-			if vc, ok := voiceConnections[i.GuildID]; ok {
-				paused[i.GuildID] = !paused[i.GuildID]
-				vc.Speaking(!paused[i.GuildID])
-
-				var emojiName string
-				if paused[i.GuildID] {
-					emojiName = "▶️"
-				} else {
-					emojiName = "⏸️"
-				}
-
-				components := i.Message.Components
-				if len(components) > 0 {
-					if row, ok := components[0].(*discordgo.ActionsRow); ok {
-						for _, component := range row.Components {
-							if button, ok := component.(*discordgo.Button); ok {
-								if button.CustomID == "music_pause" {
-									button.Emoji.Name = emojiName
-								}
-							}
-						}
-					}
-				}
-
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseUpdateMessage,
-					Data: &discordgo.InteractionResponseData{
-						Content:    i.Message.Content,
-						Components: components,
-					},
-				})
-			}
-		case "music_skip":
-			if skip, ok := skipChannels[i.GuildID]; ok {
-				skip <- true
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseDeferredMessageUpdate,
-				})
-			}
-		case "music_stop":
-			if vc, ok := voiceConnections[i.GuildID]; ok {
-				delete(queueMessages, i.GuildID)
-				if queue, ok := queues[i.GuildID]; ok {
-					for !queue.IsEmpty() {
-						queue.Get()
-					}
-				}
-
-				if procs, ok := runningProcesses[i.GuildID]; ok {
-					for _, proc := range procs {
-						if err := proc.Kill(); err != nil {
-							log.Printf("Failed to kill process %d: %v", proc.Pid, err)
-						}
-					}
-				}
-
-				if nowPlaying, ok := nowPlayingMessages[i.GuildID]; ok {
-					newContent := "Playback stopped."
-					s.ChannelMessageEditComplex(&discordgo.MessageEdit{
-						Content:    &newContent,
-						Components: &[]discordgo.MessageComponent{},
-						ID:         nowPlaying.ID,
-						Channel:    nowPlaying.ChannelID,
-					})
-					delete(nowPlayingMessages, i.GuildID)
-				}
-
-				if timer, ok := inactivityTimers[i.GuildID]; ok {
-					timer.Stop()
-					delete(inactivityTimers, i.GuildID)
-				}
-				vc.Disconnect()
-				delete(voiceConnections, i.GuildID)
-				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseUpdateMessage,
-					Data: &discordgo.InteractionResponseData{
-						Content: "Stopped playing and left the voice channel.",
-					},
-				})
-			}
-		}
+		b.handleComponent(s, i)
 	}
 }
 
-func playNext(s *discordgo.Session, guildID string, lastSong *Song) {
-	queue, ok := queues[guildID]
-	if !ok || queue.IsEmpty() {
-		delete(queueMessages, guildID)
-		if lastSong != nil {
-			if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
-				newContent := fmt.Sprintf("Playback Finished: %s", lastSong.URL)
-				s.ChannelMessageEditComplex(&discordgo.MessageEdit{
-					Content:    &newContent,
-					Components: &[]discordgo.MessageComponent{},
-					ID:         nowPlaying.ID,
-					Channel:    nowPlaying.ChannelID,
-				})
-				delete(nowPlayingMessages, guildID)
-			}
-		}
+func (b *Bot) handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	// Quick response first
+	respondEphemeral(s, i, "Processing...")
 
-		inactivityTimers[guildID] = time.AfterFunc(30*time.Second, func() {
-			if vc, ok := voiceConnections[guildID]; ok {
-				vc.Disconnect()
-				delete(voiceConnections, guildID)
-				log.Println("Disconnected due to inactivity")
-			}
-			delete(inactivityTimers, guildID)
+	switch i.ApplicationCommandData().Name {
+	case "play":
+		b.handlePlay(s, i)
+	case "skip":
+		b.handleSkip(s, i)
+	case "pause":
+		b.handlePause(s, i)
+	case "stop":
+		b.handleStop(s, i)
+	}
+}
+
+func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	query := i.ApplicationCommandData().Options[0].StringValue()
+
+	// Get voice channel
+	voiceChannelID := getUserVoiceChannel(s, i.GuildID, i.Member.User.ID)
+	if voiceChannelID == "" {
+		editResponse(s, i, "You must be in a voice channel")
+		return
+	}
+
+	// Resolve URL
+	videoURL, err := resolveURL(query)
+	if err != nil {
+		editResponse(s, i, fmt.Sprintf("Error: %v", err))
+		return
+	}
+
+	// Get video info efficiently (single yt-dlp call)
+	info, err := getVideoInfo(videoURL)
+	if err != nil {
+		editResponse(s, i, "Error getting video info")
+		return
+	}
+
+	state := b.getOrCreateGuildState(i.GuildID)
+
+	// Join voice if needed
+	if err := b.ensureVoiceConnection(s, i.GuildID, voiceChannelID, state); err != nil {
+		editResponse(s, i, "Error joining voice channel")
+		return
+	}
+
+	// Add to queue
+	song := &Song{
+		URL:       info.URL,
+		Title:     info.Title,
+		Duration:  info.Duration,
+		ChannelID: i.ChannelID,
+	}
+
+	state.queue.Add(song)
+
+	// Start playing if not already
+	if state.voice != nil && len(state.voice.OpusSend) == 0 {
+		editResponse(s, i, fmt.Sprintf("Playing: %s", info.Title))
+		go b.playNext(s, i.GuildID)
+	} else {
+		editResponse(s, i, fmt.Sprintf("Added to queue: %s", info.Title))
+	}
+}
+
+func (b *Bot) ensureVoiceConnection(s *discordgo.Session, guildID, channelID string, state *GuildState) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if state.voice != nil {
+		return nil
+	}
+
+	vc, err := s.ChannelVoiceJoin(guildID, channelID, false, true)
+	if err != nil {
+		return err
+	}
+
+	state.voice = vc
+	state.cancelInactivityTimer()
+	return nil
+}
+
+func (b *Bot) playNext(s *discordgo.Session, guildID string) {
+	state := b.getOrCreateGuildState(guildID)
+
+	song := state.queue.Get()
+	if song == nil {
+		state.startInactivityTimer(func() {
+			b.disconnectFromGuild(guildID)
 		})
 		return
 	}
 
-	song := queue.Get()
-	playSound(s, guildID, song)
+	b.playSound(s, guildID, song)
 }
 
-func playSound(s *discordgo.Session, guildID string, song *Song) {
-	log.Println("playSound started")
+func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
+	state := b.getOrCreateGuildState(guildID)
 	config := LoadConfig()
 
-	videoURL := song.URL
-	channelID := song.ChannelID
-
-	vc, ok := voiceConnections[guildID]
-	if !ok {
-		log.Println("Voice connection not found for guild: ", guildID)
-		return
-	}
-
+	// Create now playing message
 	components := musicButtons
-	if queues[guildID].IsEmpty() {
+	if state.queue.IsEmpty() {
 		components = musicButtonsNoSkip
 	}
 
-	content := fmt.Sprintf("Now playing: %s", videoURL)
+	content := fmt.Sprintf("Now playing: %s", song.URL)
 	if song.Duration > 0 {
-		content += fmt.Sprintf("\n`%s / %s`", formatDuration(0), formatDuration(song.Duration))
+		content += fmt.Sprintf("\n`00:00 / %s`", formatDuration(song.Duration))
 	}
-	nowPlaying, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+
+	msg, err := s.ChannelMessageSendComplex(song.ChannelID, &discordgo.MessageSend{
 		Content:    content,
 		Components: components,
 	})
-	nowPlayingURL := videoURL
-
 	if err == nil {
-		nowPlayingMessages[guildID] = nowPlaying
+		state.nowPlaying = msg
 	}
 
-	ytdlArgs := []string{
-		"--get-url",
-		"-f", "bestaudio",
-		"--no-playlist",
-		"--impersonate", "Firefox-135",
-		videoURL,
-	}
-
-	if config.CookiesPath != "" {
-		ytdlArgs = append(ytdlArgs, "--cookies", config.CookiesPath)
-	}
-	if config.YtDlpProxy != "" {
-		ytdlArgs = append(ytdlArgs, "--proxy", config.YtDlpProxy)
-	}
-
-	ytdl := exec.Command("yt-dlp", ytdlArgs...)
-	var ytdlerr bytes.Buffer
-	ytdl.Stderr = &ytdlerr
-	ytdlout, err := ytdl.Output()
-
+	// Get stream URL with exact same error handling
+	streamURL, err := getStreamURL(song.URL, config)
 	if err != nil {
 		log.Printf("Error getting stream URL: %v", err)
-		log.Printf("yt-dlp stderr: %s", ytdlerr.String())
-		s.ChannelMessageSend(channelID, "Error getting audio stream.")
-		playNext(s, guildID, song)
+		s.ChannelMessageSend(song.ChannelID, "Error getting audio stream.")
+		b.playNext(s, guildID)
 		return
 	}
 
-	streamURL := strings.TrimSpace(string(ytdlout))
+	// Create ffmpeg process exactly as original
+	ffmpeg := exec.Command("ffmpeg",
+		"-reconnect", "1",
+		"-reconnect_streamed", "1",
+		"-reconnect_delay_max", "5",
+		"-nostdin",
+		"-i", streamURL,
+		"-f", "s16le",
+		"-ar", "48000",
+		"-ac", "2",
+		"pipe:1")
 
-	ffmpeg := exec.Command("ffmpeg", "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-nostdin", "-i", streamURL, "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1")
-	ffmpegerr, err := ffmpeg.StderrPipe()
-
+	// Get stderr pipe for logging as original does
+	ffmpegErr, err := ffmpeg.StderrPipe()
 	if err != nil {
 		log.Printf("Error getting ffmpeg stderr pipe: %v", err)
-		playNext(s, guildID, song)
+		b.playNext(s, guildID)
 		return
 	}
 
-	ffmpegout, err := ffmpeg.StdoutPipe()
+	ffmpegOut, err := ffmpeg.StdoutPipe()
 	if err != nil {
 		log.Printf("Error getting ffmpeg stdout pipe: %v", err)
-		playNext(s, guildID, song)
+		b.playNext(s, guildID)
 		return
 	}
 
+	// Start ffmpeg stderr logger as original does
 	go func() {
-		scanner := bufio.NewScanner(ffmpegerr)
+		scanner := bufio.NewScanner(ffmpegErr)
 		for scanner.Scan() {
 			log.Printf("[ffmpeg] %s", scanner.Text())
 		}
 	}()
 
-	err = ffmpeg.Start()
-	if err != nil {
+	if err := ffmpeg.Start(); err != nil {
 		log.Printf("Error starting ffmpeg: %v", err)
-		playNext(s, guildID, song)
+		b.playNext(s, guildID)
 		return
 	}
 	log.Println("ffmpeg started")
 
-	runningProcesses[guildID] = []*os.Process{ffmpeg.Process}
-	defer delete(runningProcesses, guildID)
+	state.mu.Lock()
+	state.process = ffmpeg.Process
+	state.skipChan = make(chan bool)
+	state.mu.Unlock()
 
-	vc.Speaking(true)
-	defer vc.Speaking(false)
-
-	skip := make(chan bool)
-	skipChannels[guildID] = skip
+	// Update UI in separate goroutine
 	done := make(chan bool)
-
-	ticker := time.NewTicker(1 * time.Second)
-	startTime := time.Now()
-	var pausedTime time.Time
-	var totalPausedDuration time.Duration
-
 	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				if paused[guildID] {
-					if pausedTime.IsZero() {
-						pausedTime = time.Now()
-					}
-					continue
-				} else {
-					if !pausedTime.IsZero() {
-						totalPausedDuration += time.Since(pausedTime)
-						pausedTime = time.Time{}
-					}
-				}
-
-				elapsed := time.Since(startTime) - totalPausedDuration
-				if nowPlaying, ok := nowPlayingMessages[guildID]; ok {
-					components := musicButtonsNoSkip
-					if !queues[guildID].IsEmpty() {
-						components = musicButtons
-					}
-					newContent := fmt.Sprintf("Now playing: [%s](%s)\n`%s / %s`",
-						song.Title,
-						nowPlayingURL,
-						formatDuration(elapsed),
-						formatDuration(song.Duration),
-					)
-					queueList := queues[guildID].List()
-					if len(queueList) > 0 {
-						newContent += "\n\n**Queue:**\n"
-						for i, song := range queueList {
-							newContent += fmt.Sprintf("%d. %s\n", i+1, song.Title)
-						}
-					}
-					s.ChannelMessageEditComplex(&discordgo.MessageEdit{
-						Content:    &newContent,
-						Components: &components,
-						ID:         nowPlaying.ID,
-						Channel:    nowPlaying.ChannelID,
-					})
-				}
-			case <-done:
-				return
-			}
-		}
+		b.updateNowPlaying(s, state, song, done)
 	}()
 
-	// Opus encoding
+	// Stream audio with exact same method as original
+	b.streamAudio(state.voice, ffmpegOut, state, config)
+
+	// Cleanup
+	close(done)
+	ffmpeg.Wait()
+
+	state.mu.Lock()
+	state.process = nil
+	if state.skipChan != nil {
+		close(state.skipChan)
+		state.skipChan = nil
+	}
+	state.mu.Unlock()
+
+	log.Println("playSound finished")
+
+	// Play next
+	b.playNext(s, guildID)
+}
+
+func createOpusEncoder(config *Config) (*opus.Encoder, error) {
+	// 2049 = OPUS_APPLICATION_AUDIO (best for music)
+	encoder, err := opus.NewEncoder(48000, 2, opus.Application(2049))
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply all available encoder settings
+	encoder.SetBitrate(config.OpusBitrate)
+	encoder.SetComplexity(config.OpusComplexity)
+	encoder.SetInBandFEC(config.OpusInBandFEC)
+	encoder.SetPacketLossPerc(config.OpusPacketLossPerc)
+	encoder.SetDTX(config.OpusDTX)
+
+	return encoder, nil
+}
+
+func (b *Bot) streamAudio(vc *discordgo.VoiceConnection, audio io.Reader, state *GuildState, config *Config) {
 	const (
 		channels  = 2
 		frameRate = 48000
@@ -619,37 +624,30 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		maxBytes  = (frameSize * channels * 2)
 	)
 
-	opusApplicationAudio := 2049 // OPUS_APPLICATION_AUDIO (2049): Best for music or mixed content where high fidelity is the primary goal.
-	opusEncoder, err := opus.NewEncoder(frameRate, channels, opus.Application(opusApplicationAudio))
+	encoder, err := createOpusEncoder(config)
 	if err != nil {
 		log.Printf("Error creating opus encoder: %v", err)
-		playNext(s, guildID, song)
 		return
 	}
 
-	opusEncoder.SetBitrate(config.OpusBitrate)
-	opusEncoder.SetComplexity(config.OpusComplexity)
-	opusEncoder.SetInBandFEC(config.OpusInBandFEC)
-	opusEncoder.SetPacketLossPerc(config.OpusPacketLossPerc)
+	vc.Speaking(true)
+	defer vc.Speaking(false)
 
 readLoop:
 	for {
 		select {
-		case <-skip:
+		case <-state.skipChan:
 			log.Println("Song skipped")
-			close(done)
-			ticker.Stop()
-			ffmpeg.Process.Kill()
-			playNext(s, guildID, song)
 			return
 		default:
-			if paused[guildID] {
+			if state.paused {
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
+			// Read PCM data exactly as original
 			pcm := make([]int16, frameSize*channels)
-			err = binary.Read(ffmpegout, binary.LittleEndian, &pcm)
+			err = binary.Read(audio, binary.LittleEndian, &pcm)
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				break readLoop
 			}
@@ -658,68 +656,182 @@ readLoop:
 				break readLoop
 			}
 
+			// Encode to opus exactly as original
 			opusData := make([]byte, maxBytes)
-			n, err := opusEncoder.Encode(pcm, opusData)
+			n, err := encoder.Encode(pcm, opusData)
 			if err != nil {
 				log.Printf("Error encoding pcm to opus: %v", err)
 				break readLoop
 			}
 
+			// Send opus data
 			vc.OpusSend <- opusData[:n]
 		}
 	}
-
-	close(done)
-	ticker.Stop()
-	ffmpeg.Wait()
-
-	log.Println("playSound finished")
-
-	playNext(s, guildID, song)
 }
 
-func getDuration(videoURL string) (time.Duration, error) {
-	ytdl := exec.Command("yt-dlp", "--get-duration", videoURL)
-	durationBytes, err := ytdl.Output()
+// Helper functions
+func setupLogging() error {
+	f, err := os.OpenFile("bot.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		return 0, err
+		return err
+	}
+	log.SetOutput(io.MultiWriter(os.Stdout, f))
+	return nil
+}
+
+func checkYtDlpUpdates() {
+	update := func() {
+		log.Println("Checking for yt-dlp updates...")
+		cmd := exec.Command("pipx", "upgrade", "--pip-args=--pre", "yt-dlp")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("Error updating yt-dlp: %v\n%s", err, output)
+		}
 	}
 
-	durationStr := strings.TrimSpace(string(durationBytes))
-	parts := strings.Split(durationStr, ":")
-	var duration time.Duration
-	if len(parts) == 3 { // HH:MM:SS
-		h, _ := strconv.Atoi(parts[0])
-		m, _ := strconv.Atoi(parts[1])
-		s, _ := strconv.Atoi(parts[2])
-		duration = time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
-	} else if len(parts) == 2 { // MM:SS
-		m, _ := strconv.Atoi(parts[0])
-		s, _ := strconv.Atoi(parts[1])
-		duration = time.Duration(m)*time.Minute + time.Duration(s)*time.Second
-	} else if len(parts) == 1 { // SS
-		s, _ := strconv.Atoi(parts[0])
-		duration = time.Duration(s) * time.Second
-	} else {
-		return 0, fmt.Errorf("invalid duration format: %s", durationStr)
+	update() // Initial check
+	ticker := time.NewTicker(24 * time.Hour)
+	for range ticker.C {
+		update()
+	}
+}
+
+func respondEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: content,
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+}
+
+func editResponse(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
+	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		Content: &content,
+	})
+}
+
+func resolveURL(query string) (string, error) {
+	if strings.Contains(query, "spotify.com") {
+		return resolveSpotifyURL(query)
+	}
+	if strings.HasPrefix(query, "http") {
+		return query, nil
+	}
+	return searchYoutube(query)
+}
+
+func getVideoInfo(url string) (*VideoInfo, error) {
+	// Get all info in one call
+	cmd := exec.Command("yt-dlp",
+		"--dump-json",
+		"--no-playlist",
+		url)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
 	}
 
-	return duration, nil
+	var data struct {
+		Title    string `json:"title"`
+		Duration int    `json:"duration"`
+	}
+
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, err
+	}
+
+	return &VideoInfo{
+		URL:      url,
+		Title:    data.Title,
+		Duration: time.Duration(data.Duration) * time.Second,
+	}, nil
+}
+
+func getStreamURL(videoURL string, config *Config) (string, error) {
+	args := []string{
+		"--get-url",
+		"-f", "bestaudio",
+		"--no-playlist",
+		videoURL,
+	}
+
+	if config.CookiesPath != "" {
+		args = append(args, "--cookies", config.CookiesPath)
+	}
+	if config.YtDlpProxy != "" {
+		args = append(args, "--proxy", config.YtDlpProxy)
+	}
+
+	cmd := exec.Command("yt-dlp", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
+func getUserVoiceChannel(s *discordgo.Session, guildID, userID string) string {
+	guild, err := s.State.Guild(guildID)
+	if err != nil {
+		return ""
+	}
+
+	for _, vs := range guild.VoiceStates {
+		if vs.UserID == userID {
+			return vs.ChannelID
+		}
+	}
+	return ""
+}
+
+func formatNowPlaying(song *Song, elapsed time.Duration) string {
+	return fmt.Sprintf("Now playing: [%s](%s)\n`%s / %s`",
+		song.Title,
+		song.URL,
+		formatDuration(elapsed),
+		formatDuration(song.Duration),
+	)
 }
 
 func formatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
 	m := d / time.Minute
-	d -= m * time.Minute
-	s := d / time.Second
+	s := d % time.Minute / time.Second
 	return fmt.Sprintf("%02d:%02d", m, s)
 }
 
-func getVideoTitle(videoURL string) (string, error) {
-	ytdl := exec.Command("yt-dlp", "--get-title", videoURL)
-	titleBytes, err := ytdl.Output()
-	if err != nil {
-		return "", err
+// GuildState methods
+
+func (gs *GuildState) cleanup() {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+
+	if gs.process != nil {
+		gs.process.Kill()
 	}
-	return strings.TrimSpace(string(titleBytes)), nil
+	if gs.voice != nil {
+		gs.voice.Disconnect()
+	}
+	if gs.inactiveTimer != nil {
+		gs.inactiveTimer.Stop()
+	}
+}
+
+func (gs *GuildState) startInactivityTimer(callback func()) {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+
+	gs.cancelInactivityTimer()
+	gs.inactiveTimer = time.AfterFunc(30*time.Second, callback)
+}
+
+func (gs *GuildState) cancelInactivityTimer() {
+	if gs.inactiveTimer != nil {
+		gs.inactiveTimer.Stop()
+		gs.inactiveTimer = nil
+	}
 }
