@@ -491,7 +491,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		"--get-url",
 		"-f", "bestaudio",
 		"--no-playlist",
-		"--impersonate", "chrome",
+		"--impersonate", "Firefox-135",
 		videoURL,
 	}
 
