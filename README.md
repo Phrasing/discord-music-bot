@@ -118,15 +118,31 @@ A simple Discord music bot that plays audio from YouTube.
 
 ### With Docker
 
-To run the bot using Docker, first build the image:
+You can run the bot using the pre-built Docker image from the GitHub Container Registry.
+
+1.  **Log in to the GitHub Container Registry:**
+
+    ```bash
+    echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+    ```
+    *Note: You will need to create a Personal Access Token (PAT) with the `read:packages` scope and use it in place of `${{ secrets.GITHUB_TOKEN }}` if you are running this locally.*
+
+2.  **Pull the latest image:**
+
+    ```bash
+    docker pull ghcr.io/phrasing/discord-music-bot:latest
+    ```
+
+3.  **Run the container:**
+
+    ```bash
+    docker run -d --env-file .env --restart unless-stopped --name discord-music-bot ghcr.io/phrasing/discord-music-bot:latest
+    ```
+
+Alternatively, you can build the image locally:
 
 ```bash
 docker build -t discord-music-bot:latest .
-```
-
-Then, run the container:
-
-```bash
 docker run -d --env-file .env --restart unless-stopped --name discord-music-bot discord-music-bot:latest
 ```
 
