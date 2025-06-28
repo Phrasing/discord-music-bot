@@ -110,6 +110,16 @@ A simple Discord music bot that plays audio from YouTube.
 
 ## Running the Bot
 
+### With Docker
+
+To run the bot using Docker, you can use the following command:
+
+```bash
+docker run -d --env-file .env --restart unless-stopped --name discord-music-bot ghcr.io/Phrasing/discord-music-bot:latest
+```
+
+### Without Docker
+
 ```bash
 go run .
 ```
