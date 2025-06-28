@@ -508,16 +508,31 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 		return
 	}
 
-	ffmpeg := exec.Command("ffmpeg",
+	ffmpegArgs := []string{
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
-		"-reconnect_delay_max", "5",
+		"-reconnect_delay_max", fmt.Sprintf("%d", config.FFmpegReconnectDelay),
 		"-nostdin",
 		"-i", streamURL,
 		"-f", "s16le",
 		"-ar", "48000",
 		"-ac", "2",
-		"pipe:1")
+	}
+
+	audioFilter := config.BuildAudioFilter()
+	if audioFilter != "" {
+		ffmpegArgs = append(ffmpegArgs, "-af", audioFilter)
+	}
+
+	ffmpegArgs = append(ffmpegArgs, "pipe:1")
+
+	ffmpeg := exec.Command("ffmpeg", ffmpegArgs...)
+
+	// Set process priority for real-time audio
+	ffmpeg.SysProcAttr = &syscall.SysProcAttr{
+		// On Linux, set nice value for higher priority
+		// Nice: -10, // Requires root
+	}
 
 	ffmpegErr, err := ffmpeg.StderrPipe()
 	if err != nil {
@@ -533,10 +548,17 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 		return
 	}
 
+	// Enhanced error logging with filter
 	go func() {
 		scanner := bufio.NewScanner(ffmpegErr)
 		for scanner.Scan() {
-			log.Printf("[ffmpeg] %s", scanner.Text())
+			line := scanner.Text()
+			// Filter out common non-error messages
+			if !strings.Contains(line, "Press [q] to stop") &&
+				!strings.Contains(line, "size=") &&
+				!strings.Contains(line, "time=") {
+				log.Printf("[ffmpeg] %s", line)
+			}
 		}
 	}()
 
@@ -545,7 +567,7 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 		b.playNext(s, guildID)
 		return
 	}
-	log.Println("ffmpeg started")
+	log.Println("ffmpeg started with optimized settings")
 
 	state.mu.Lock()
 	state.process = ffmpeg.Process
