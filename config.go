@@ -81,7 +81,7 @@ func LoadConfig() *Config {
 
 		// Opus Encoder Settings - Optimized for music streaming on Discord
 		OpusBitrate:        getEnvAsInt("OPUS_BITRATE", 128000),     // 128kbps - Discord's max
-		OpusComplexity:     getEnvAsInt("OPUS_COMPLEXITY", 9),       // 9 for better CPU efficiency
+		OpusComplexity:     getEnvAsInt("OPUS_COMPLEXITY", 10),      // 10 for best quality.
 		OpusInBandFEC:      getEnvAsBool("OPUS_INBAND_FEC", true),   // Forward Error Correction
 		OpusPacketLossPerc: getEnvAsInt("OPUS_PACKET_LOSS_PERC", 5), // Expected packet loss %
 		OpusDTX:            getEnvAsBool("OPUS_DTX", false),         // DTX off for music
@@ -167,7 +167,7 @@ func (c *Config) applyPreset() {
 	case "performance":
 		// Optimize for low CPU usage
 		if os.Getenv("OPUS_COMPLEXITY") == "" {
-			c.OpusComplexity = 5
+			c.OpusComplexity = 6
 		}
 		if os.Getenv("ENABLE_RESAMPLING") == "" {
 			c.EnableResampling = false
@@ -181,9 +181,6 @@ func (c *Config) applyPreset() {
 
 	case "quality":
 		// Maximum quality settings
-		if os.Getenv("OPUS_COMPLEXITY") == "" {
-			c.OpusComplexity = 10
-		}
 		if os.Getenv("RESAMPLING_QUALITY") == "" {
 			c.ResamplingQuality = 33
 		}
