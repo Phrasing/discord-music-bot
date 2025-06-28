@@ -20,14 +20,12 @@ import (
 	"gopkg.in/hraban/opus.v2"
 )
 
-// Bot encapsulates all bot state
 type Bot struct {
 	session *discordgo.Session
 	guilds  map[string]*GuildState
 	mu      sync.RWMutex
 }
 
-// GuildState holds per-guild state
 type GuildState struct {
 	voice         *discordgo.VoiceConnection
 	queue         *Queue
@@ -39,7 +37,6 @@ type GuildState struct {
 	mu            sync.Mutex
 }
 
-// VideoInfo holds video metadata
 type VideoInfo struct {
 	URL      string        `json:"url"`
 	Title    string        `json:"title"`
@@ -47,7 +44,6 @@ type VideoInfo struct {
 }
 
 func main() {
-	// Setup logging
 	if err := setupLogging(); err != nil {
 		log.Fatal(err)
 	}
@@ -64,7 +60,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Start update checker
 	go checkYtDlpUpdates()
 
 	sc := make(chan os.Signal, 1)
@@ -366,7 +361,6 @@ func (b *Bot) updateNowPlaying(s *discordgo.Session, state *GuildState, song *So
 }
 
 func resolveSpotifyURL(url string) (string, error) {
-	// Extract track ID from Spotify URL
 	parts := strings.Split(url, "track/")
 	if len(parts) < 2 {
 		return "", fmt.Errorf("invalid Spotify URL")
@@ -375,13 +369,11 @@ func resolveSpotifyURL(url string) (string, error) {
 	trackIDString := parts[1]
 	trackID := spotify.ID(strings.Split(trackIDString, "?")[0])
 
-	// Get track name from Spotify
 	trackName, err := getTrackName(trackID)
 	if err != nil {
 		return "", fmt.Errorf("getting track name: %w", err)
 	}
 
-	// Search on YouTube
 	return searchYoutube(trackName)
 }
 
@@ -395,7 +387,6 @@ func (b *Bot) interactionCreate(s *discordgo.Session, i *discordgo.InteractionCr
 }
 
 func (b *Bot) handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	// Quick response first
 	respondEphemeral(s, i, "Processing...")
 
 	switch i.ApplicationCommandData().Name {
@@ -413,21 +404,18 @@ func (b *Bot) handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	query := i.ApplicationCommandData().Options[0].StringValue()
 
-	// Get voice channel
 	voiceChannelID := getUserVoiceChannel(s, i.GuildID, i.Member.User.ID)
 	if voiceChannelID == "" {
 		editResponse(s, i, "You must be in a voice channel")
 		return
 	}
 
-	// Resolve URL
 	videoURL, err := resolveURL(query)
 	if err != nil {
 		editResponse(s, i, fmt.Sprintf("Error: %v", err))
 		return
 	}
 
-	// Get video info efficiently (single yt-dlp call)
 	info, err := getVideoInfo(videoURL)
 	if err != nil {
 		editResponse(s, i, "Error getting video info")
@@ -436,13 +424,11 @@ func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	state := b.getOrCreateGuildState(i.GuildID)
 
-	// Join voice if needed
 	if err := b.ensureVoiceConnection(s, i.GuildID, voiceChannelID, state); err != nil {
 		editResponse(s, i, "Error joining voice channel")
 		return
 	}
 
-	// Add to queue
 	song := &Song{
 		URL:       info.URL,
 		Title:     info.Title,
@@ -452,7 +438,6 @@ func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	state.queue.Add(song)
 
-	// Start playing if not already
 	if state.voice != nil && len(state.voice.OpusSend) == 0 {
 		editResponse(s, i, fmt.Sprintf("Playing: %s", info.Title))
 		go b.playNext(s, i.GuildID)
@@ -497,7 +482,6 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 	state := b.getOrCreateGuildState(guildID)
 	config := LoadConfig()
 
-	// Create now playing message
 	components := musicButtons
 	if state.queue.IsEmpty() {
 		components = musicButtonsNoSkip
@@ -516,7 +500,6 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 		state.nowPlaying = msg
 	}
 
-	// Get stream URL with exact same error handling
 	streamURL, err := getStreamURL(song.URL, config)
 	if err != nil {
 		log.Printf("Error getting stream URL: %v", err)
@@ -525,7 +508,6 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 		return
 	}
 
-	// Create ffmpeg process exactly as original
 	ffmpeg := exec.Command("ffmpeg",
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
@@ -537,7 +519,6 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 		"-ac", "2",
 		"pipe:1")
 
-	// Get stderr pipe for logging as original does
 	ffmpegErr, err := ffmpeg.StderrPipe()
 	if err != nil {
 		log.Printf("Error getting ffmpeg stderr pipe: %v", err)
@@ -552,7 +533,6 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 		return
 	}
 
-	// Start ffmpeg stderr logger as original does
 	go func() {
 		scanner := bufio.NewScanner(ffmpegErr)
 		for scanner.Scan() {
@@ -572,16 +552,13 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 	state.skipChan = make(chan bool)
 	state.mu.Unlock()
 
-	// Update UI in separate goroutine
 	done := make(chan bool)
 	go func() {
 		b.updateNowPlaying(s, state, song, done)
 	}()
 
-	// Stream audio with exact same method as original
 	b.streamAudio(state.voice, ffmpegOut, state, config)
 
-	// Cleanup
 	close(done)
 	ffmpeg.Wait()
 
@@ -595,7 +572,6 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 
 	log.Println("playSound finished")
 
-	// Play next
 	b.playNext(s, guildID)
 }
 
@@ -606,7 +582,6 @@ func createOpusEncoder(config *Config) (*opus.Encoder, error) {
 		return nil, err
 	}
 
-	// Apply all available encoder settings
 	encoder.SetBitrate(config.OpusBitrate)
 	encoder.SetComplexity(config.OpusComplexity)
 	encoder.SetInBandFEC(config.OpusInBandFEC)
@@ -689,7 +664,7 @@ func checkYtDlpUpdates() {
 		}
 	}
 
-	update() // Initial check
+	update()
 	ticker := time.NewTicker(24 * time.Hour)
 	for range ticker.C {
 		update()
@@ -723,7 +698,6 @@ func resolveURL(query string) (string, error) {
 }
 
 func getVideoInfo(url string) (*VideoInfo, error) {
-	// Get all info in one call
 	cmd := exec.Command("yt-dlp",
 		"--dump-json",
 		"--no-playlist",
