@@ -18,7 +18,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o /app/bot .
 FROM alpine:latest
 
 # Install runtime dependencies
-RUN apk add --no-cache ffmpeg python3 py3-pip opus pipx
+RUN apk add --no-cache ffmpeg python3 py3-pip opus opusfile pipx
 RUN pipx install --pip-args=--pre "yt-dlp[default,curl-cffi]"
 ENV PATH="/root/.local/bin:$PATH"
 
