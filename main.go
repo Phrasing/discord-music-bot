@@ -440,7 +440,7 @@ func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	if state.voice != nil && len(state.voice.OpusSend) == 0 {
 		editResponse(s, i, fmt.Sprintf("Playing: %s", info.Title))
-		go b.playNext(s, i.GuildID)
+		go b.playNext(s, i.GuildID, nil)
 	} else {
 		editResponse(s, i, fmt.Sprintf("Added to queue: %s", info.Title))
 	}
@@ -464,11 +464,21 @@ func (b *Bot) ensureVoiceConnection(s *discordgo.Session, guildID, channelID str
 	return nil
 }
 
-func (b *Bot) playNext(s *discordgo.Session, guildID string) {
+func (b *Bot) playNext(s *discordgo.Session, guildID string, lastSong *Song) {
 	state := b.getOrCreateGuildState(guildID)
 
 	song := state.queue.Get()
 	if song == nil {
+		if lastSong != nil && state.nowPlaying != nil {
+			newContent := fmt.Sprintf("Playback finished: %s", lastSong.Title)
+			s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+				Content:    &newContent,
+				Components: &[]discordgo.MessageComponent{},
+				ID:         state.nowPlaying.ID,
+				Channel:    state.nowPlaying.ChannelID,
+			})
+			state.nowPlaying = nil
+		}
 		state.startInactivityTimer(func() {
 			b.disconnectFromGuild(guildID)
 		})
@@ -504,7 +514,7 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 	if err != nil {
 		log.Printf("Error getting stream URL: %v", err)
 		s.ChannelMessageSend(song.ChannelID, "Error getting audio stream.")
-		b.playNext(s, guildID)
+		b.playNext(s, guildID, song)
 		return
 	}
 
@@ -537,14 +547,14 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 	ffmpegErr, err := ffmpeg.StderrPipe()
 	if err != nil {
 		log.Printf("Error getting ffmpeg stderr pipe: %v", err)
-		b.playNext(s, guildID)
+		b.playNext(s, guildID, song)
 		return
 	}
 
 	ffmpegOut, err := ffmpeg.StdoutPipe()
 	if err != nil {
 		log.Printf("Error getting ffmpeg stdout pipe: %v", err)
-		b.playNext(s, guildID)
+		b.playNext(s, guildID, song)
 		return
 	}
 
@@ -564,7 +574,7 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 
 	if err := ffmpeg.Start(); err != nil {
 		log.Printf("Error starting ffmpeg: %v", err)
-		b.playNext(s, guildID)
+		b.playNext(s, guildID, song)
 		return
 	}
 	log.Println("ffmpeg started with optimized settings")
@@ -594,7 +604,7 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 
 	log.Println("playSound finished")
 
-	b.playNext(s, guildID)
+	b.playNext(s, guildID, song)
 }
 
 func createOpusEncoder(config *Config) (*opus.Encoder, error) {
