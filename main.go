@@ -82,7 +82,7 @@ func main() {
 }
 
 func startUpdateChecker() {
-	ticker := time.NewTicker(24 * time.Hour)
+	ticker := time.NewTicker(1 * time.Hour)
 	go func() {
 		for {
 			<-ticker.C
@@ -621,10 +621,10 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		return
 	}
 
-	opusEncoder.SetBitrate(128000)
-	opusEncoder.SetComplexity(10)
-	opusEncoder.SetInBandFEC(true)
-	opusEncoder.SetPacketLossPerc(15)
+	opusEncoder.SetBitrate(config.OpusBitrate)
+	opusEncoder.SetComplexity(config.OpusComplexity)
+	opusEncoder.SetInBandFEC(config.OpusInBandFEC)
+	opusEncoder.SetPacketLossPerc(config.OpusPacketLossPerc)
 
 readLoop:
 	for {
