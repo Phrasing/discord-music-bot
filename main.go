@@ -88,18 +88,9 @@ func startUpdateChecker() {
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			log.Printf("Error updating yt-dlp: %v\n%s", err, output)
-		} else {
-			log.Printf("yt-dlp update check complete:\n%s", output)
-		}
-
-		log.Println("Checking for curl-cffi updates...")
-		cmd = exec.Command("pip", "install", "curl_cffi", "--upgrade")
-		output, err = cmd.CombinedOutput()
-		if err != nil {
-			log.Printf("Error updating curl-cffi: %v\n%s", err, output)
 			return
 		}
-		log.Printf("curl-cffi update check complete:\n%s", output)
+		log.Printf("yt-dlp update check complete:\n%s", output)
 	}
 
 	go func() {
@@ -500,7 +491,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		"--get-url",
 		"-f", "bestaudio",
 		"--no-playlist",
-		"--impersonate", "chrome135",
+		"--impersonate", "chrome",
 		videoURL,
 	}
 
