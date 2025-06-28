@@ -3,12 +3,17 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
 )
+
+func pow(x, y float64) float64 {
+	return math.Pow(x, y)
+}
 
 type Config struct {
 	// Discord Bot Configuration
@@ -285,9 +290,11 @@ func (c *Config) BuildAudioFilter() string {
 
 	// Dynamic range compression
 	if c.AudioCompressor {
+		// Convert dB to linear for threshold
+		thresholdLinear := fmt.Sprintf("%.6f", 10.0/pow(20.0, -c.CompressorThreshold/20.0))
 		filters = append(filters, fmt.Sprintf(
-			"acompressor=threshold=%.1f:ratio=%.1f:attack=%d:release=%d",
-			c.CompressorThreshold,
+			"acompressor=threshold=%s:ratio=%.1f:attack=%d:release=%d",
+			thresholdLinear,
 			c.CompressorRatio,
 			c.CompressorAttack,
 			c.CompressorRelease,
