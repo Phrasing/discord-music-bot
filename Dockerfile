@@ -19,6 +19,7 @@ FROM alpine:latest
 
 # Install runtime dependencies
 RUN apk add --no-cache ffmpeg python3 py3-pip opus
+RUN pip3 install --no-cache-dir "yt-dlp[default,curl-cffi]"
 
 WORKDIR /app
 

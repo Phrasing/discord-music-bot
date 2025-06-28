@@ -48,10 +48,10 @@ A simple Discord music bot that plays audio from YouTube.
     brew install ffmpeg opus opusfile
     ```
 
-    It is also highly recommended to use the nightly version of `yt-dlp` to keep up with YouTube's changes. You can install it using `pipx`:
+    It is also highly recommended to use the nightly version of `yt-dlp` to keep up with YouTube's changes. To enable support for impersonating browser requests, which can help with sites that use TLS fingerprinting, install `yt-dlp` with the `curl-cffi` extra:
 
     ```bash
-    pipx install --pip-args=--pre "yt-dlp[default]"
+    pipx install --pip-args=--pre "yt-dlp[default,curl-cffi]"
     pipx ensurepath
     ```
 
