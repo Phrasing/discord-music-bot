@@ -17,6 +17,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/zmb3/spotify"
+	"gopkg.in/hraban/opus.v2"
 )
 
 var (
@@ -63,27 +64,12 @@ func main() {
 		log.Fatal("Error opening connection: ", err)
 	}
 
-	log.Println("Removing old commands...")
-	registeredCommands, err := dg.ApplicationCommands(dg.State.User.ID, "")
+	log.Println("Registering commands...")
+	_, err = dg.ApplicationCommandBulkOverwrite(dg.State.User.ID, "", commands)
 	if err != nil {
-		log.Fatalf("Could not fetch registered commands: %v", err)
+		log.Fatalf("Could not register commands: %v", err)
 	}
-
-	for _, v := range registeredCommands {
-		err := dg.ApplicationCommandDelete(dg.State.User.ID, "", v.ID)
-		if err != nil {
-			log.Panicf("Cannot delete '%v' command: %v", v.Name, err)
-		}
-	}
-
-	log.Println("Adding commands...")
-	for _, v := range commands {
-		_, err := dg.ApplicationCommandCreate(dg.State.User.ID, "", v)
-		if err != nil {
-			log.Panicf("Cannot create '%v' command: %v", v.Name, err)
-		}
-	}
-	log.Println("Commands added.")
+	log.Println("Commands registered.")
 
 	fmt.Println("Bot is now running. Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)
@@ -483,16 +469,19 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		"--no-playlist",
 		videoURL,
 	}
+
 	if config.CookiesPath != "" {
 		ytdlArgs = append(ytdlArgs, "--cookies", config.CookiesPath)
 	}
 	if config.YtDlpProxy != "" {
 		ytdlArgs = append(ytdlArgs, "--proxy", config.YtDlpProxy)
 	}
+
 	ytdl := exec.Command("yt-dlp", ytdlArgs...)
 	var ytdlerr bytes.Buffer
 	ytdl.Stderr = &ytdlerr
 	ytdlout, err := ytdl.Output()
+
 	if err != nil {
 		log.Printf("Error getting stream URL: %v", err)
 		log.Printf("yt-dlp stderr: %s", ytdlerr.String())
@@ -500,20 +489,14 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		playNext(s, guildID, song)
 		return
 	}
+
 	streamURL := strings.TrimSpace(string(ytdlout))
 
 	ffmpeg := exec.Command("ffmpeg", "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-nostdin", "-i", streamURL, "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1")
 	ffmpegerr, err := ffmpeg.StderrPipe()
+
 	if err != nil {
 		log.Printf("Error getting ffmpeg stderr pipe: %v", err)
-		playNext(s, guildID, song)
-		return
-	}
-
-	dca := exec.Command("dca")
-	dcaerr, err := dca.StderrPipe()
-	if err != nil {
-		log.Printf("Error getting dca stderr pipe: %v", err)
 		playNext(s, guildID, song)
 		return
 	}
@@ -521,14 +504,6 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	ffmpegout, err := ffmpeg.StdoutPipe()
 	if err != nil {
 		log.Printf("Error getting ffmpeg stdout pipe: %v", err)
-		playNext(s, guildID, song)
-		return
-	}
-	dca.Stdin = ffmpegout
-
-	dcaout, err := dca.StdoutPipe()
-	if err != nil {
-		log.Printf("Error getting dca stdout pipe: %v", err)
 		playNext(s, guildID, song)
 		return
 	}
@@ -540,13 +515,6 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		}
 	}()
 
-	go func() {
-		scanner := bufio.NewScanner(dcaerr)
-		for scanner.Scan() {
-			log.Printf("[dca] %s", scanner.Text())
-		}
-	}()
-
 	err = ffmpeg.Start()
 	if err != nil {
 		log.Printf("Error starting ffmpeg: %v", err)
@@ -555,15 +523,7 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	}
 	log.Println("ffmpeg started")
 
-	err = dca.Start()
-	if err != nil {
-		log.Printf("Error starting dca: %v", err)
-		playNext(s, guildID, song)
-		return
-	}
-	log.Println("dca started")
-
-	runningProcesses[guildID] = []*os.Process{ffmpeg.Process, dca.Process}
+	runningProcesses[guildID] = []*os.Process{ffmpeg.Process}
 	defer delete(runningProcesses, guildID)
 
 	vc.Speaking(true)
@@ -572,8 +532,6 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 	skip := make(chan bool)
 	skipChannels[guildID] = skip
 	done := make(chan bool)
-
-	log.Println("Reading from dca pipe")
 
 	ticker := time.NewTicker(1 * time.Second)
 	startTime := time.Now()
@@ -628,7 +586,27 @@ func playSound(s *discordgo.Session, guildID string, song *Song) {
 		}
 	}()
 
-	var opuslen int16
+	// Opus encoding
+	const (
+		channels  = 2
+		frameRate = 48000
+		frameSize = 960
+		maxBytes  = (frameSize * channels * 2)
+	)
+
+	opusApplicationAudio := 2049 // OPUS_APPLICATION_AUDIO (2049): Best for music or mixed content where high fidelity is the primary goal.
+	opusEncoder, err := opus.NewEncoder(frameRate, channels, opus.Application(opusApplicationAudio))
+	if err != nil {
+		log.Printf("Error creating opus encoder: %v", err)
+		playNext(s, guildID, song)
+		return
+	}
+
+	opusEncoder.SetBitrate(128000)
+	opusEncoder.SetComplexity(10)
+	opusEncoder.SetInBandFEC(true)
+	opusEncoder.SetPacketLossPerc(15)
+
 readLoop:
 	for {
 		select {
@@ -637,7 +615,6 @@ readLoop:
 			close(done)
 			ticker.Stop()
 			ffmpeg.Process.Kill()
-			dca.Process.Kill()
 			playNext(s, guildID, song)
 			return
 		default:
@@ -645,31 +622,31 @@ readLoop:
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-			err = binary.Read(dcaout, binary.LittleEndian, &opuslen)
+
+			pcm := make([]int16, frameSize*channels)
+			err = binary.Read(ffmpegout, binary.LittleEndian, &pcm)
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				break readLoop
+			}
 			if err != nil {
-				if err != io.EOF && err != io.ErrUnexpectedEOF {
-					log.Printf("Error reading from dca stdout: %v", err)
-				}
+				log.Printf("Error reading from ffmpeg stdout: %v", err)
 				break readLoop
 			}
 
-			InBuf := make([]byte, opuslen)
-			err = binary.Read(dcaout, binary.LittleEndian, &InBuf)
+			opusData := make([]byte, maxBytes)
+			n, err := opusEncoder.Encode(pcm, opusData)
 			if err != nil {
-				if err != io.EOF && err != io.ErrUnexpectedEOF {
-					log.Printf("Error reading from dca stdout: %v", err)
-				}
+				log.Printf("Error encoding pcm to opus: %v", err)
 				break readLoop
 			}
 
-			vc.OpusSend <- InBuf
+			vc.OpusSend <- opusData[:n]
 		}
 	}
 
 	close(done)
 	ticker.Stop()
 	ffmpeg.Wait()
-	dca.Wait()
 
 	log.Println("playSound finished")
 

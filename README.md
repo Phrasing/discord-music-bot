@@ -14,7 +14,9 @@ A simple Discord music bot that plays audio from YouTube.
 - [Go](https://golang.org/doc/install) (version 1.18 or higher)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - [ffmpeg](https://ffmpeg.org/download.html)
-- [dca](https://github.com/bwmarrin/dca)
+- C libraries for Opus:
+  - **Debian/Ubuntu**: `libopus-dev`, `libopusfile-dev`
+  - **Mac (Homebrew)**: `opus`, `opusfile`
 
 ## Installation
 
@@ -31,23 +33,21 @@ A simple Discord music bot that plays audio from YouTube.
     go mod tidy
     ```
 
-3.  **Install `yt-dlp`, `ffmpeg`, and `dca`:**
+3.  **Install System Dependencies:**
 
-    Follow the installation instructions for your operating system from the links in the Prerequisites section.
+    Install `yt-dlp`, `ffmpeg`, and the Opus C libraries using your system's package manager.
 
-    Make sure that your Go bin directory is in your `PATH`. You can add it to your `~/.bashrc` or `~/.zshrc` with the following command:
-
+    **For Debian/Ubuntu:**
     ```bash
-    export PATH=$PATH:$(go env GOPATH)/bin
+    sudo apt-get update && sudo apt-get install -y ffmpeg libopus-dev libopusfile-dev
     ```
 
-    For `dca`, you may need to use the following command to install it correctly:
-
+    **For Mac (Homebrew):**
     ```bash
-    CGO_CFLAGS="-O3 -Wno-stringop-overread" go install github.com/bwmarrin/dca/cmd/dca@latest
+    brew install ffmpeg opus opusfile
     ```
 
-    It is highly recommended to use the nightly version of `yt-dlp` to keep up with YouTube's changes. You can install it using `pipx`:
+    It is also highly recommended to use the nightly version of `yt-dlp` to keep up with YouTube's changes. You can install it using `pipx`:
 
     ```bash
     pipx install --pip-args=--pre "yt-dlp[default]"
