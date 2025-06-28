@@ -82,18 +82,23 @@ func main() {
 }
 
 func startUpdateChecker() {
-	ticker := time.NewTicker(1 * time.Hour)
+	runUpdateCheck := func() {
+		log.Println("Checking for yt-dlp updates...")
+		cmd := exec.Command("pipx", "upgrade", "--pip-args=--pre", "yt-dlp")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("Error updating yt-dlp: %v\n%s", err, output)
+			return
+		}
+		log.Printf("yt-dlp update check complete:\n%s", output)
+	}
+
 	go func() {
+		runUpdateCheck() // Initial check on startup
+		ticker := time.NewTicker(24 * time.Hour)
 		for {
 			<-ticker.C
-			log.Println("Checking for yt-dlp updates...")
-			cmd := exec.Command("pipx", "upgrade", "--pip-args=--pre", "yt-dlp")
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				log.Printf("Error updating yt-dlp: %v\n%s", err, output)
-				continue
-			}
-			log.Printf("yt-dlp update check complete:\n%s", output)
+			runUpdateCheck()
 		}
 	}()
 }
