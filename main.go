@@ -71,12 +71,31 @@ func main() {
 	}
 	log.Println("Commands registered.")
 
+	go startUpdateChecker()
+
 	fmt.Println("Bot is now running. Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
 
 	dg.Close()
+}
+
+func startUpdateChecker() {
+	ticker := time.NewTicker(24 * time.Hour)
+	go func() {
+		for {
+			<-ticker.C
+			log.Println("Checking for yt-dlp updates...")
+			cmd := exec.Command("pipx", "upgrade", "yt-dlp")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Printf("Error updating yt-dlp: %v\n%s", err, output)
+				continue
+			}
+			log.Printf("yt-dlp update check complete:\n%s", output)
+		}
+	}()
 }
 
 func interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {

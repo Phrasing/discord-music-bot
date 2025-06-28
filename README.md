@@ -8,6 +8,7 @@ A simple Discord music bot that plays audio from YouTube.
 - Supports queueing songs.
 - Automatically disconnects after 30 seconds of inactivity.
 - Uses slash commands for interaction.
+- Automatically checks for `yt-dlp` updates every 24 hours to ensure reliability.
 
 ## Prerequisites
 
