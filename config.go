@@ -34,10 +34,10 @@ type Config struct {
 
 	// Advanced Audio Processing
 	AudioCompressor     bool    // Enable dynamic range compression
-	CompressorThreshold float64 // Compressor threshold in dB
-	CompressorRatio     float64 // Compression ratio
-	CompressorAttack    int     // Attack time in ms
-	CompressorRelease   int     // Release time in ms
+	CompressorThreshold float64 // Compressor threshold in dB (e.g., -20.0)
+	CompressorRatio     float64 // Compression ratio (e.g., 4.0)
+	CompressorAttack    int     // Attack time in ms (e.g., 5)
+	CompressorRelease   int     // Release time in ms (e.g., 50)
 
 	// Resampling Settings
 	EnableResampling  bool // Enable high-quality resampling
@@ -286,7 +286,7 @@ func (c *Config) BuildAudioFilter() string {
 	// Dynamic range compression
 	if c.AudioCompressor {
 		filters = append(filters, fmt.Sprintf(
-			"acompressor=threshold=%.1f:ratio=%.1f:attack=%d:release=%d:makeup=2",
+			"acompressor=threshold=%.1f:ratio=%.1f:attack=%d:release=%d",
 			c.CompressorThreshold,
 			c.CompressorRatio,
 			c.CompressorAttack,
