@@ -61,9 +61,8 @@ type Config struct {
 }
 
 func LoadConfig() *Config {
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("No .env file found, using environment variables")
+	if err := godotenv.Load(); err != nil {
+		log.Println("Info: .env file not found, falling back to environment variables.")
 	}
 
 	// Load quality preset first to set defaults
