@@ -123,6 +123,14 @@ A simple Discord music bot that plays audio from YouTube.
     GEMINI_API_KEY=YOUR_GEMINI_API_KEY
     ```
 
+7.  **Set up a Custom DJ Prompt (Optional):**
+
+    You can customize the prompt used by the `/dj` command by creating a text file and setting the `DJ_PROMPT_FILE_PATH` in your `.env` file. The default prompt can be found in `djprompt.txt`.
+
+    ```
+    DJ_PROMPT_FILE_PATH=path/to/your/prompt.txt
+    ```
+
 ## Running the Bot
 
 ### With Docker

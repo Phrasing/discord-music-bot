@@ -25,6 +25,7 @@ type Config struct {
 	SpotifyClientSecret string
 	YtDlpProxy          string
 	GeminiAPIKey        string
+	DJPromptFilePath    string
 
 	// Opus Encoder Settings
 	OpusBitrate        int  // SetBitrate(bits int)
@@ -79,6 +80,7 @@ func LoadConfig() *Config {
 		SpotifyClientSecret: os.Getenv("SPOTIFY_CLIENT_SECRET"),
 		YtDlpProxy:          os.Getenv("YT_DLP_PROXY"),
 		GeminiAPIKey:        os.Getenv("GEMINI_API_KEY"),
+		DJPromptFilePath:    getEnvAsString("DJ_PROMPT_FILE_PATH", "djprompt.txt"),
 
 		// Opus Encoder Settings - Optimized for music streaming on Discord
 		OpusBitrate:        getEnvAsInt("OPUS_BITRATE", 128000),     // 128kbps - Discord's max
