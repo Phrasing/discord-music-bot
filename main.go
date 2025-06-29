@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/zmb3/spotify"
 	"gopkg.in/hraban/opus.v2"
 )
 
@@ -370,21 +369,19 @@ func (b *Bot) updateNowPlaying(s *discordgo.Session, state *GuildState, song *So
 	}
 }
 
-func resolveSpotifyURL(url string) (string, error) {
-	parts := strings.Split(url, "track/")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid Spotify URL")
+func resolveSpotifyURL(url, channelID string) ([]*Song, error) {
+	if strings.Contains(url, "track") {
+		// It's a single track
+		track, err := getSpotifyTrack(url)
+		if err != nil {
+			return nil, err
+		}
+		return []*Song{track}, nil
+	} else if strings.Contains(url, "playlist") {
+		// It's a playlist
+		return getSpotifyPlaylist(url, channelID)
 	}
-
-	trackIDString := parts[1]
-	trackID := spotify.ID(strings.Split(trackIDString, "?")[0])
-
-	trackName, err := getTrackName(trackID)
-	if err != nil {
-		return "", fmt.Errorf("getting track name: %w", err)
-	}
-
-	return searchYoutube(trackName)
+	return nil, fmt.Errorf("unsupported Spotify URL")
 }
 
 func (b *Bot) interactionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -420,15 +417,9 @@ func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	videoURL, err := resolveURL(query)
+	songs, err := b.resolveQuery(query, i.ChannelID)
 	if err != nil {
 		editResponse(s, i, fmt.Sprintf("Error: %v", err))
-		return
-	}
-
-	info, err := getVideoInfo(videoURL)
-	if err != nil {
-		editResponse(s, i, "Error getting video info")
 		return
 	}
 
@@ -439,21 +430,58 @@ func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	song := &Song{
-		URL:       info.URL,
-		Title:     info.Title,
-		Duration:  info.Duration,
-		ChannelID: i.ChannelID,
+	for _, song := range songs {
+		state.queue.Add(song)
 	}
-
-	state.queue.Add(song)
 
 	if state.process == nil {
-		editResponse(s, i, fmt.Sprintf("Playing: %s", info.Title))
+		if len(songs) > 1 {
+			editResponse(s, i, fmt.Sprintf("Added %d songs to the queue.", len(songs)))
+		} else {
+			editResponse(s, i, fmt.Sprintf("Playing: %s", songs[0].Title))
+		}
 		go b.playNext(s, i.GuildID, nil)
 	} else {
-		editResponse(s, i, fmt.Sprintf("Added to queue: %s", info.Title))
+		if len(songs) > 1 {
+			editResponse(s, i, fmt.Sprintf("Added %d songs to the queue.", len(songs)))
+		} else {
+			editResponse(s, i, fmt.Sprintf("Added to queue: %s", songs[0].Title))
+		}
 	}
+}
+
+func (b *Bot) resolveQuery(query, channelID string) ([]*Song, error) {
+	var songs []*Song
+
+	// Handle Spotify URLs first
+	if strings.Contains(query, "spotify.com") {
+		return resolveSpotifyURL(query, channelID)
+	}
+
+	// Check if it's a playlist or a single video
+	isPlaylist := strings.Contains(query, "list=") || strings.Contains(query, "/playlist/")
+
+	videoInfos, err := getVideoInfos(query, isPlaylist)
+	if err != nil {
+		// If fetching as a playlist fails, try as a single video/search
+		if isPlaylist {
+			videoInfos, err = getVideoInfos(query, false)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("getting video info: %w", err)
+		}
+	}
+
+	for _, info := range videoInfos {
+		songs = append(songs, &Song{
+			URL:       info.URL,
+			Title:     info.Title,
+			Duration:  info.Duration,
+			ChannelID: channelID,
+		})
+	}
+
+	return songs, nil
 }
 
 func (b *Bot) ensureVoiceConnection(s *discordgo.Session, guildID, channelID string, state *GuildState) error {
@@ -730,41 +758,66 @@ func editResponse(s *discordgo.Session, i *discordgo.InteractionCreate, content 
 	})
 }
 
-func resolveURL(query string) (string, error) {
-	if strings.Contains(query, "spotify.com") {
-		return resolveSpotifyURL(query)
+func getVideoInfos(query string, isPlaylist bool) ([]*VideoInfo, error) {
+	args := []string{"--dump-json"}
+	if isPlaylist {
+		args = append(args, "--flat-playlist")
+	} else {
+		args = append(args, "--no-playlist")
 	}
-	if strings.HasPrefix(query, "http") {
-		return query, nil
+
+	if !strings.HasPrefix(query, "http") {
+		args = append(args, fmt.Sprintf("ytsearch:%s", query))
+	} else {
+		args = append(args, query)
 	}
-	return searchYoutube(query)
-}
 
-func getVideoInfo(url string) (*VideoInfo, error) {
-	cmd := exec.Command("yt-dlp",
-		"--dump-json",
-		"--no-playlist",
-		url)
-
+	cmd := exec.Command("yt-dlp", args...)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 
-	var data struct {
-		Title    string `json:"title"`
-		Duration int    `json:"duration"`
+	var infos []*VideoInfo
+	if isPlaylist {
+		scanner := bufio.NewScanner(strings.NewReader(string(output)))
+		for scanner.Scan() {
+			var data struct {
+				ID       string  `json:"id"`
+				Title    string  `json:"title"`
+				Duration float64 `json:"duration"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &data); err != nil {
+				log.Printf("Skipping unparsable playlist item: %v", err)
+				continue
+			}
+			infos = append(infos, &VideoInfo{
+				URL:      "https://www.youtube.com/watch?v=" + data.ID,
+				Title:    data.Title,
+				Duration: time.Duration(data.Duration * float64(time.Second)),
+			})
+		}
+	} else {
+		var data struct {
+			URL      string  `json:"webpage_url"`
+			Title    string  `json:"title"`
+			Duration float64 `json:"duration"`
+		}
+		if err := json.Unmarshal(output, &data); err != nil {
+			return nil, fmt.Errorf("failed to parse video info: %w", err)
+		}
+		infos = append(infos, &VideoInfo{
+			URL:      data.URL,
+			Title:    data.Title,
+			Duration: time.Duration(data.Duration * float64(time.Second)),
+		})
 	}
 
-	if err := json.Unmarshal(output, &data); err != nil {
-		return nil, err
+	if len(infos) == 0 {
+		return nil, fmt.Errorf("no video information found")
 	}
 
-	return &VideoInfo{
-		URL:      url,
-		Title:    data.Title,
-		Duration: time.Duration(data.Duration) * time.Second,
-	}, nil
+	return infos, nil
 }
 
 func getStreamURL(videoURL string, config *Config) (string, error) {
