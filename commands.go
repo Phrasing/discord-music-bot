@@ -95,8 +95,8 @@ var (
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "genre",
-					Description: "The genre you want to listen to",
+					Name:        "prompt",
+					Description: "",
 					Required:    true,
 				},
 			},

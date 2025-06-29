@@ -460,6 +460,53 @@ func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	b.enqueueAndPlay(s, i, songs)
 }
 
+// promptTemplate is a constant holding the structured prompt for the AI.
+// The `%s` verb is a placeholder for the user's actual Discord message.
+const promptTemplate = `
+You are a music recommendation AI that powers a Discord bot. Your primary function is to interpret a user's unstructured text query and generate a playlist.
+
+### RULES:
+1.  **Analyze the query:** Identify the era, genre, and/or vibe from the user's text.
+2.  **Song Count:** Generate exactly 10 songs unless the user specifies a different amount.
+3.  **Output Format:** Your response MUST be a plain text list. Each song must be on a new line and formatted EXACTLY as: Artist - Song Title
+4.  **Formatting Constraints:** Do NOT include numbering, bullet points, markdown, or any introductory/concluding text. Your entire response should only be the list of songs.
+
+### EXAMPLES:
+
+---
+**User Query:** "upbeat 80s synth-pop"
+**Your Response:**
+A-ha - Take On Me
+Kenny Loggins - Footloose
+Whitney Houston - I Wanna Dance with Somebody (Who Loves Me)
+Dexys Midnight Runners - Come On Eileen
+Cyndi Lauper - Girls Just Want to Have Fun
+Madonna - Into the Groove
+Eurythmics - Sweet Dreams (Are Made of This)
+Soft Cell - Tainted Love
+The Human League - Don't You Want Me
+Duran Duran - Hungry Like the Wolf
+---
+**User Query:** "sad indie songs for a rainy day"
+**Your Response:**
+Bon Iver - Skinny Love
+The National - I Need My Girl
+Sufjan Stevens - Casimir Pulaski Day
+beabadoobee - Coffee
+Radiohead - No Surprises
+Elliott Smith - Between the Bars
+Bright Eyes - First Day of My Life
+Iron & Wine - Flightless Bird, American Mouth
+Death Cab for Cutie - I Will Follow You into the Dark
+Mazzy Star - Fade Into You
+---
+
+### USER PLAYLIST REQUEST:
+
+**User Query:** "%s"
+**Your Response:**
+`
+
 func (b *Bot) handleDJ(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
@@ -474,8 +521,8 @@ func (b *Bot) handleDJ(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 
 	go func() {
-		genre := i.ApplicationCommandData().Options[0].StringValue()
-		prompt := fmt.Sprintf("Generate a list of 20 songs for a DJ set in the %s genre. Format each line as 'Artist - Song Title'.", genre)
+		userInput := i.ApplicationCommandData().Options[0].StringValue()
+		prompt := fmt.Sprintf(promptTemplate, userInput)
 
 		response, err := generateContent(prompt)
 		if err != nil {
@@ -505,7 +552,7 @@ func (b *Bot) handleDJ(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		wg.Wait()
 
 		if len(songs) == 0 {
-			editResponse(s, i, "Could not find any songs for that genre.")
+			editResponse(s, i, "Could not find any songs for that prompt.")
 			return
 		}
 
