@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -406,6 +407,8 @@ func (b *Bot) handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		b.handleStop(s, i)
 	case "ask":
 		b.handleAsk(s, i)
+	case "dj":
+		b.handleDJ(s, i)
 	}
 }
 
@@ -454,7 +457,75 @@ func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
+	b.enqueueAndPlay(s, i, songs)
+}
+
+func (b *Bot) handleDJ(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "The AI DJ is crafting a set for you...",
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+	if err != nil {
+		log.Printf("could not defer response: %v", err)
+		return
+	}
+
+	go func() {
+		genre := i.ApplicationCommandData().Options[0].StringValue()
+		prompt := fmt.Sprintf("Generate a list of 20 songs for a DJ set in the %s genre. Format each line as 'Artist - Song Title'.", genre)
+
+		response, err := generateContent(prompt)
+		if err != nil {
+			editResponse(s, i, fmt.Sprintf("Error generating playlist: %v", err))
+			return
+		}
+
+		songQueries := strings.Split(strings.TrimSpace(response), "\n")
+		var songs []*Song
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		for _, query := range songQueries {
+			wg.Add(1)
+			go func(q string) {
+				defer wg.Done()
+				resolvedSongs, err := b.resolveQuery(q, i.ChannelID)
+				if err != nil {
+					log.Printf("could not resolve song query '%s': %v", q, err)
+					return
+				}
+				mu.Lock()
+				songs = append(songs, resolvedSongs...)
+				mu.Unlock()
+			}(query)
+		}
+		wg.Wait()
+
+		if len(songs) == 0 {
+			editResponse(s, i, "Could not find any songs for that genre.")
+			return
+		}
+
+		// Shuffle the playlist
+		rand.Shuffle(len(songs), func(i, j int) {
+			songs[i], songs[j] = songs[j], songs[i]
+		})
+
+		b.enqueueAndPlay(s, i, songs)
+	}()
+}
+
+func (b *Bot) enqueueAndPlay(s *discordgo.Session, i *discordgo.InteractionCreate, songs []*Song) {
 	state := b.getOrCreateGuildState(i.GuildID)
+
+	voiceChannelID := getUserVoiceChannel(s, i.GuildID, i.Member.User.ID)
+	if voiceChannelID == "" {
+		editResponse(s, i, "You must be in a voice channel")
+		return
+	}
 
 	if err := b.ensureVoiceConnection(s, i.GuildID, voiceChannelID, state); err != nil {
 		editResponse(s, i, "Error joining voice channel")

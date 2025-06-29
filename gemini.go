@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"google.golang.org/genai"
 )
@@ -33,10 +34,12 @@ func generateContent(prompt string) (string, error) {
 		return "", fmt.Errorf("gemini client not initialized")
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	result, err := geminiClient.Models.GenerateContent(
 		ctx,
-		"gemini-2.5-flash",
+		"gemini-2.5-pro",
 		genai.Text(prompt),
 		nil,
 	)

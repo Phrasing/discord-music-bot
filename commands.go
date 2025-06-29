@@ -89,5 +89,17 @@ var (
 				},
 			},
 		},
+		{
+			Name:        "dj",
+			Description: "Let the AI DJ play a set for you",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "genre",
+					Description: "The genre you want to listen to",
+					Required:    true,
+				},
+			},
+		},
 	}
 )
