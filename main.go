@@ -699,16 +699,28 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 		components = musicButtonsNoSkip
 	}
 
-	content := fmt.Sprintf("Now playing: %s", song.URL)
-	if song.Duration > 0 {
-		content += fmt.Sprintf("\n`00:00 / %s`", formatDuration(song.Duration))
+	content := formatNowPlaying(song, 0)
+
+	var msg *discordgo.Message
+	var err error
+
+	if state.nowPlaying != nil {
+		msg, err = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+			Content:    &content,
+			Components: &components,
+			ID:         state.nowPlaying.ID,
+			Channel:    state.nowPlaying.ChannelID,
+		})
+	} else {
+		msg, err = s.ChannelMessageSendComplex(song.ChannelID, &discordgo.MessageSend{
+			Content:    content,
+			Components: components,
+		})
 	}
 
-	msg, err := s.ChannelMessageSendComplex(song.ChannelID, &discordgo.MessageSend{
-		Content:    content,
-		Components: components,
-	})
-	if err == nil {
+	if err != nil {
+		log.Printf("Error sending/editing now playing message: %v", err)
+	} else {
 		state.nowPlaying = msg
 	}
 
