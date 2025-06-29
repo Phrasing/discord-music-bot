@@ -96,7 +96,7 @@ var (
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "prompt",
-					Description: "",
+					Description: "DJ Prompt",
 					Required:    true,
 				},
 			},
