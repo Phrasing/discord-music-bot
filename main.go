@@ -30,6 +30,7 @@ type GuildState struct {
 	voice         *discordgo.VoiceConnection
 	queue         *Queue
 	skipChan      chan bool
+	done          chan bool
 	paused        bool
 	nowPlaying    *discordgo.Message
 	process       *os.Process
@@ -50,6 +51,7 @@ func main() {
 
 	initSpotify()
 	initGemini()
+
 	config := LoadConfig()
 
 	bot, err := NewBot(config.BotToken)
@@ -190,6 +192,13 @@ func (b *Bot) handlePause(s *discordgo.Session, i *discordgo.InteractionCreate) 
 
 func (b *Bot) handleStop(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	state := b.getOrCreateGuildState(i.GuildID)
+	respondEphemeral(s, i, "Stopped playing and left the voice channel")
+
+	// Signal the update goroutine to stop
+	if state.done != nil {
+		close(state.done)
+		state.done = nil
+	}
 
 	// Clear queue
 	for !state.queue.IsEmpty() {
@@ -201,21 +210,25 @@ func (b *Bot) handleStop(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		state.process.Kill()
 	}
 
-	// Update now playing message
-	if state.nowPlaying != nil {
+	// Lock the state to safely modify nowPlaying
+	state.mu.Lock()
+	nowPlayingMsg := state.nowPlaying
+	state.nowPlaying = nil
+	state.mu.Unlock()
+
+	// Update the message if it exists
+	if nowPlayingMsg != nil {
 		newContent := "Playback stopped."
 		s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Content:    &newContent,
 			Components: &[]discordgo.MessageComponent{},
-			ID:         state.nowPlaying.ID,
-			Channel:    state.nowPlaying.ChannelID,
+			ID:         nowPlayingMsg.ID,
+			Channel:    nowPlayingMsg.ChannelID,
 		})
-		state.nowPlaying = nil
 	}
 
 	// Disconnect
 	b.disconnectFromGuild(i.GuildID)
-	respondEphemeral(s, i, "Stopped playing and left the voice channel")
 }
 
 func (b *Bot) handlePauseButton(s *discordgo.Session, i *discordgo.InteractionCreate, state *GuildState) {
@@ -742,16 +755,13 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 	state.mu.Lock()
 	state.process = ffmpeg.Process
 	state.skipChan = make(chan bool, 1)
+	state.done = make(chan bool)
 	state.mu.Unlock()
 
-	done := make(chan bool)
-	go func() {
-		b.updateNowPlaying(s, state, song, done)
-	}()
+	go b.updateNowPlaying(s, state, song, state.done)
 
 	b.streamAudio(state.voice, ffmpegOut, state, config)
 
-	close(done)
 	ffmpeg.Wait()
 
 	state.mu.Lock()
@@ -854,6 +864,8 @@ func checkYtDlpUpdates() {
 		cmd := exec.Command("pipx", "upgrade", "--pip-args=--pre", "yt-dlp")
 		if output, err := cmd.CombinedOutput(); err != nil {
 			log.Printf("Error updating yt-dlp: %v\n%s", err, output)
+		} else {
+			log.Println("Successfully checked for yt-dlp updates.")
 		}
 	}
 
