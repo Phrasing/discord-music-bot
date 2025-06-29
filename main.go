@@ -194,40 +194,7 @@ func (b *Bot) handleStop(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	state := b.getOrCreateGuildState(i.GuildID)
 	respondEphemeral(s, i, "Stopped playing and left the voice channel")
 
-	// Signal the update goroutine to stop
-	if state.done != nil {
-		close(state.done)
-		state.done = nil
-	}
-
-	// Clear queue
-	for !state.queue.IsEmpty() {
-		state.queue.Get()
-	}
-
-	// Kill process if running
-	if state.process != nil {
-		state.process.Kill()
-	}
-
-	// Lock the state to safely modify nowPlaying
-	state.mu.Lock()
-	nowPlayingMsg := state.nowPlaying
-	state.nowPlaying = nil
-	state.mu.Unlock()
-
-	// Update the message if it exists
-	if nowPlayingMsg != nil {
-		newContent := "Playback stopped."
-		s.ChannelMessageEditComplex(&discordgo.MessageEdit{
-			Content:    &newContent,
-			Components: &[]discordgo.MessageComponent{},
-			ID:         nowPlayingMsg.ID,
-			Channel:    nowPlayingMsg.ChannelID,
-		})
-	}
-
-	// Disconnect
+	state.stopPlayback(s)
 	b.disconnectFromGuild(i.GuildID)
 }
 
@@ -630,16 +597,7 @@ func (b *Bot) playNext(s *discordgo.Session, guildID string, lastSong *Song) {
 
 	song := state.queue.Get()
 	if song == nil {
-		if lastSong != nil && state.nowPlaying != nil {
-			newContent := fmt.Sprintf("Playback finished: %s", lastSong.Title)
-			s.ChannelMessageEditComplex(&discordgo.MessageEdit{
-				Content:    &newContent,
-				Components: &[]discordgo.MessageComponent{},
-				ID:         state.nowPlaying.ID,
-				Channel:    state.nowPlaying.ChannelID,
-			})
-			state.nowPlaying = nil
-		}
+		state.stopPlayback(s)
 		state.startInactivityTimer(func() {
 			b.disconnectFromGuild(guildID)
 		})
@@ -755,6 +713,9 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 	state.mu.Lock()
 	state.process = ffmpeg.Process
 	state.skipChan = make(chan bool, 1)
+	if state.done != nil {
+		close(state.done)
+	}
 	state.done = make(chan bool)
 	state.mu.Unlock()
 
@@ -1009,6 +970,36 @@ func formatDuration(d time.Duration) string {
 }
 
 // GuildState methods
+
+func (gs *GuildState) stopPlayback(s *discordgo.Session) {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+
+	if gs.done != nil {
+		close(gs.done)
+		gs.done = nil
+	}
+
+	for !gs.queue.IsEmpty() {
+		gs.queue.Get()
+	}
+
+	if gs.process != nil {
+		gs.process.Kill()
+		gs.process = nil
+	}
+
+	if gs.nowPlaying != nil {
+		newContent := "Playback stopped."
+		s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+			Content:    &newContent,
+			Components: &[]discordgo.MessageComponent{},
+			ID:         gs.nowPlaying.ID,
+			Channel:    gs.nowPlaying.ChannelID,
+		})
+		gs.nowPlaying = nil
+	}
+}
 
 func (gs *GuildState) cleanup() {
 	gs.mu.Lock()
