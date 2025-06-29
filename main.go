@@ -151,15 +151,19 @@ func (b *Bot) handleComponent(s *discordgo.Session, i *discordgo.InteractionCrea
 func (b *Bot) handleSkip(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	state := b.getOrCreateGuildState(i.GuildID)
 
-	if state.skipChan != nil {
-		select {
-		case state.skipChan <- true:
-			respondEphemeral(s, i, "Skipped the current song")
-		default:
-			respondEphemeral(s, i, "Nothing to skip")
-		}
-	} else {
+	if state.skipChan == nil {
 		respondEphemeral(s, i, "Nothing to skip")
+		return
+	}
+
+	// Acknowledge the interaction immediately.
+	respondEphemeral(s, i, "Skipped the current song")
+
+	// Non-blocking send to the skip channel.
+	select {
+	case state.skipChan <- true:
+	default:
+		// If the channel is full, a skip is already pending.
 	}
 }
 
@@ -251,14 +255,20 @@ func (b *Bot) handlePauseButton(s *discordgo.Session, i *discordgo.InteractionCr
 }
 
 func (b *Bot) handleSkipButton(s *discordgo.Session, i *discordgo.InteractionCreate, state *GuildState) {
-	if state.skipChan != nil {
-		select {
-		case state.skipChan <- true:
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseDeferredMessageUpdate,
-			})
-		default:
-		}
+	if state.skipChan == nil {
+		return // Or respond with an error
+	}
+
+	// Acknowledge the interaction immediately.
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredMessageUpdate,
+	})
+
+	// Non-blocking send to the skip channel.
+	select {
+	case state.skipChan <- true:
+	default:
+		// If the channel is full, a skip is already pending.
 	}
 }
 
@@ -581,7 +591,7 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 
 	state.mu.Lock()
 	state.process = ffmpeg.Process
-	state.skipChan = make(chan bool)
+	state.skipChan = make(chan bool, 1)
 	state.mu.Unlock()
 
 	done := make(chan bool)
@@ -623,13 +633,14 @@ func createOpusEncoder(config *Config) (*opus.Encoder, error) {
 	return encoder, nil
 }
 
-func (b *Bot) streamAudio(vc *discordgo.VoiceConnection, audio io.Reader, state *GuildState, config *Config) {
+func (b *Bot) streamAudio(vc *discordgo.VoiceConnection, audio io.ReadCloser, state *GuildState, config *Config) {
 	const (
 		channels  = 2
 		frameRate = 48000
 		frameSize = 960
 		maxBytes  = (frameSize * channels * 2)
 	)
+	defer audio.Close()
 
 	encoder, err := createOpusEncoder(config)
 	if err != nil {
