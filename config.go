@@ -225,9 +225,7 @@ func (c *Config) Validate() error {
 		2880: "60ms",
 	}
 
-	if duration, ok := validBufferSizes[c.BufferSize]; ok {
-		log.Printf("Using buffer size: %d samples (%s per frame)", c.BufferSize, duration)
-	} else {
+	if _, ok := validBufferSizes[c.BufferSize]; !ok {
 		log.Printf("Warning: BufferSize %d is not a standard Opus frame size, using 960 (20ms)", c.BufferSize)
 		c.BufferSize = 960
 	}
