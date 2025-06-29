@@ -162,6 +162,13 @@ func (b *Bot) handleSkip(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	// Acknowledge the interaction immediately.
 	respondEphemeral(s, i, "Skipped the current song")
 
+	state.mu.Lock()
+	if state.paused {
+		state.paused = false
+	}
+	state.mu.Unlock()
+	state.voice.Speaking(true)
+
 	// Non-blocking send to the skip channel.
 	select {
 	case state.skipChan <- true:
@@ -244,6 +251,13 @@ func (b *Bot) handleSkipButton(s *discordgo.Session, i *discordgo.InteractionCre
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredMessageUpdate,
 	})
+
+	state.mu.Lock()
+	if state.paused {
+		state.paused = false
+		state.voice.Speaking(true)
+	}
+	state.mu.Unlock()
 
 	// Non-blocking send to the skip channel.
 	select {
@@ -779,7 +793,11 @@ readLoop:
 			log.Println("Song skipped")
 			return
 		default:
-			if state.paused {
+			state.mu.Lock()
+			paused := state.paused
+			state.mu.Unlock()
+
+			if paused {
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
