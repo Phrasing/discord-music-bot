@@ -438,7 +438,7 @@ func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	state.queue.Add(song)
 
-	if state.voice != nil && len(state.voice.OpusSend) == 0 {
+	if state.process == nil {
 		editResponse(s, i, fmt.Sprintf("Playing: %s", info.Title))
 		go b.playNext(s, i.GuildID, nil)
 	} else {
