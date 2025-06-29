@@ -48,6 +48,7 @@ func main() {
 	}
 
 	initSpotify()
+	initGemini()
 	config := LoadConfig()
 
 	bot, err := NewBot(config.BotToken)
@@ -405,7 +406,21 @@ func (b *Bot) handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		b.handlePause(s, i)
 	case "stop":
 		b.handleStop(s, i)
+	case "ask":
+		b.handleAsk(s, i)
 	}
+}
+
+func (b *Bot) handleAsk(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	prompt := i.ApplicationCommandData().Options[0].StringValue()
+
+	response, err := generateContent(prompt)
+	if err != nil {
+		editResponse(s, i, fmt.Sprintf("Error: %v", err))
+		return
+	}
+
+	editResponse(s, i, response)
 }
 
 func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {

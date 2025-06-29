@@ -114,6 +114,15 @@ A simple Discord music bot that plays audio from YouTube.
     YT_DLP_PROXY=YOUR_PROXY_URL
     ```
 
+6.  **Set up Gemini API (Optional):**
+
+    -   Go to the [Google AI Studio](https://aistudio.google.com/app/apikey) to get your API key.
+    -   Add it to your `.env` file:
+
+    ```
+    GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+    ```
+
 ## Running the Bot
 
 ### With Docker
@@ -158,5 +167,6 @@ go run .
 -   `/stop`: Stops the music, clears the queue, and disconnects the bot from the voice channel.
 -   `/skip`: Skips the current song and plays the next one in the queue.
 -   `/pause`: Pauses or resumes the current song.
+-   `/ask <prompt>`: Ask a question to the Gemini AI.
 
 You can also use the buttons on the "Now Playing" message to control the music.

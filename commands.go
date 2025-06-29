@@ -77,5 +77,17 @@ var (
 			Name:        "pause",
 			Description: "Pause or resume the current song",
 		},
+		{
+			Name:        "ask",
+			Description: "Ask a question to the Gemini AI",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "prompt",
+					Description: "The question you want to ask",
+					Required:    true,
+				},
+			},
+		},
 	}
 )
