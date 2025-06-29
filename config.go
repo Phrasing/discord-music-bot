@@ -264,9 +264,6 @@ func (c *Config) Validate() error {
 		c.FFmpegReconnectDelay = 5
 	}
 
-	// Log active preset
-	log.Printf("Using quality preset: %s", c.QualityPreset)
-
 	return nil
 }
 
