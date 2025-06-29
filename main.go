@@ -395,8 +395,6 @@ func (b *Bot) interactionCreate(s *discordgo.Session, i *discordgo.InteractionCr
 }
 
 func (b *Bot) handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	respondEphemeral(s, i, "Processing...")
-
 	switch i.ApplicationCommandData().Name {
 	case "play":
 		b.handlePlay(s, i)
@@ -412,18 +410,36 @@ func (b *Bot) handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 }
 
 func (b *Bot) handleAsk(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	prompt := i.ApplicationCommandData().Options[0].StringValue()
-
-	response, err := generateContent(prompt)
+	// Defer the response immediately to avoid interaction timeout.
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Moosic is thinking...",
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
 	if err != nil {
-		editResponse(s, i, fmt.Sprintf("Error: %v", err))
+		log.Printf("could not defer response: %v", err)
 		return
 	}
 
-	editResponse(s, i, response)
+	// Run the long-running Gemini API call in a goroutine.
+	go func() {
+		prompt := i.ApplicationCommandData().Options[0].StringValue()
+
+		response, err := generateContent(prompt)
+		if err != nil {
+			editResponse(s, i, fmt.Sprintf("Error: %v", err))
+			return
+		}
+
+		// Edit the original deferred response with the result.
+		editResponse(s, i, response)
+	}()
 }
 
 func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	respondEphemeral(s, i, "Processing...")
 	query := i.ApplicationCommandData().Options[0].StringValue()
 
 	voiceChannelID := getUserVoiceChannel(s, i.GuildID, i.Member.User.ID)
