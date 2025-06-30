@@ -39,10 +39,11 @@ func generateContent(prompt string) (string, error) {
 
 	result, err := geminiClient.Models.GenerateContent(
 		ctx,
-		"gemini-2.5-pro",
+		"gemini-2.5-flash",
 		genai.Text(prompt),
 		nil,
 	)
+
 	if err != nil {
 		return "", fmt.Errorf("generating content: %w", err)
 	}

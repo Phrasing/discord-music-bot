@@ -1,4 +1,5 @@
 .env
 cookies.txt
+djprompt.txt
 cline-context/
 bot.log

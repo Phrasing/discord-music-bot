@@ -175,7 +175,6 @@ go run .
 -   `/stop`: Stops the music, clears the queue, and disconnects the bot from the voice channel.
 -   `/skip`: Skips the current song and plays the next one in the queue.
 -   `/pause`: Pauses or resumes the current song.
--   `/ask <prompt>`: Ask a question to the Gemini AI.
 -   `/dj <genre>`: Let the AI DJ play a set for you based on a genre.
 
 You can also use the buttons on the "Now Playing" message to control the music.

@@ -383,40 +383,9 @@ func (b *Bot) handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate
 		b.handlePause(s, i)
 	case "stop":
 		b.handleStop(s, i)
-	case "ask":
-		b.handleAsk(s, i)
 	case "dj":
 		b.handleDJ(s, i)
 	}
-}
-
-func (b *Bot) handleAsk(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	// Defer the response immediately to avoid interaction timeout.
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: "Thinking...",
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
-	if err != nil {
-		log.Printf("could not defer response: %v", err)
-		return
-	}
-
-	// Run the long-running Gemini API call in a goroutine.
-	go func() {
-		prompt := i.ApplicationCommandData().Options[0].StringValue()
-
-		response, err := generateContent(prompt)
-		if err != nil {
-			editResponse(s, i, fmt.Sprintf("Error: %v", err))
-			return
-		}
-
-		// Edit the original deferred response with the result.
-		editResponse(s, i, response)
-	}()
 }
 
 func (b *Bot) handlePlay(s *discordgo.Session, i *discordgo.InteractionCreate) {
