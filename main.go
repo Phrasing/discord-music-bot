@@ -268,26 +268,10 @@ func (b *Bot) handleSkipButton(s *discordgo.Session, i *discordgo.InteractionCre
 }
 
 func (b *Bot) handleStopButton(s *discordgo.Session, i *discordgo.InteractionCreate, state *GuildState) {
-	// Clear queue
-	for !state.queue.IsEmpty() {
-		state.queue.Get()
-	}
-
-	// Kill process
-	if state.process != nil {
-		state.process.Kill()
-	}
-
-	// Update message
-	newContent := "Playback stopped."
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Content: newContent,
-		},
+		Type: discordgo.InteractionResponseDeferredMessageUpdate,
 	})
-
-	// Disconnect
+	state.stopPlayback(s)
 	b.disconnectFromGuild(i.GuildID)
 }
 
@@ -737,7 +721,10 @@ func (b *Bot) playSound(s *discordgo.Session, guildID string, song *Song) {
 
 	b.streamAudio(state.voice, ffmpegOut, state, config)
 
-	ffmpeg.Wait()
+	err = ffmpeg.Wait()
+	if err != nil && err.Error() != "signal: killed" {
+		log.Printf("ffmpeg error: %v", err)
+	}
 
 	state.mu.Lock()
 	state.process = nil
