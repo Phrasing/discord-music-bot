@@ -1,5 +1,4 @@
-# Discord Music Bot
-
+# DJ Cool
 A simple Discord music bot that plays audio from YouTube.
 
 ## Features
