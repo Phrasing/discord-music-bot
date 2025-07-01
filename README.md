@@ -1,9 +1,6 @@
 # djvon
-<img src="https://github.com/user-attachments/assets/392fb12f-8b44-4095-bb63-63f4d2d07094" alt="image" width="100" height="100"/>
-
 A simple Discord music bot with an AI DJ mode that plays audio from YouTube.
-
-
+<img width="472" alt="REEPUQPn" src="https://github.com/user-attachments/assets/c7084dae-b4a1-4ded-955e-f4fe3e509d64" width="" height=""/>
 ## Features
 
 - Plays audio from YouTube, SoundCloud, and Spotify.
