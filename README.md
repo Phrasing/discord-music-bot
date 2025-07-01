@@ -1,4 +1,4 @@
-# DJ Cool
+# djvon
 A simple Discord music bot with an AI DJ mode that plays audio from YouTube.
 
 ## Features
