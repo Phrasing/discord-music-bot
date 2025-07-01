@@ -26,8 +26,8 @@ A simple Discord music bot with an AI DJ mode that plays audio from YouTube.
 1.  **Clone the repository:**
 
     ```bash
-    git clone https://github.com/Phrasing/discord-music-bot.git
-    cd discord-music-bot
+    git clone https://github.com/Phrasing/djvon.git
+    cd djvon
     ```
 
 2.  **Install Go dependencies:**
@@ -149,20 +149,20 @@ You can run the bot using the pre-built Docker image from the GitHub Container R
 2.  **Pull the latest image:**
 
     ```bash
-    docker pull ghcr.io/phrasing/discord-music-bot:latest
+    docker pull ghcr.io/phrasing/djvon:latest
     ```
 
 3.  **Run the container:**
 
     ```bash
-    docker run -d --env-file .env --restart unless-stopped --name discord-music-bot ghcr.io/phrasing/discord-music-bot:latest
+    docker run -d --env-file .env --restart unless-stopped --name djvon ghcr.io/phrasing/djvon:latest
     ```
 
 Alternatively, you can build the image locally:
 
 ```bash
-docker build -t discord-music-bot:latest .
-docker run -d --env-file .env --restart unless-stopped --name discord-music-bot discord-music-bot:latest
+docker build -t djvon:latest .
+docker run -d --env-file .env --restart unless-stopped --name djvon djvon:latest
 ```
 
 ### Without Docker
